@@ -1,0 +1,71 @@
+name: Debian package
+
+on:
+  push:
+    branches:
+      - '**'
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  debian-trixie:
+    name: Build bird3 Debian package on trixie
+    runs-on: ubuntu-latest
+    container:
+      image: debian:trixie
+    env:
+      DEB_VERSION: 3.3.0
+      DEB_RELEASE: 1~trixie
+    steps:
+      - name: Install build dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            adduser \
+            autoconf \
+            automake \
+            bison \
+            build-essential \
+            ca-certificates \
+            dpkg-dev \
+            flex \
+            git \
+            libncurses-dev \
+            libreadline-dev \
+            libssh-dev \
+            m4 \
+            tar \
+            xz-utils
+
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Build Debian packages
+        run: |
+          ./distro/pkg/deb/build-package-v3.sh --output-dir "$PWD/debian-artifacts"
+
+      - name: Verify minimal package contents
+        run: |
+          candidate="$(find "$PWD/debian-artifacts" -maxdepth 1 -name 'bird3_*_amd64.deb' ! -name 'bird3-doc_*' -print -quit)"
+          test -n "$candidate"
+          workdir="$(mktemp -d)"
+          trap 'rm -rf "$workdir"' EXIT
+          (cd "$workdir" && ar x "$candidate" && mkdir data && tar -xf data.tar.* -C data)
+          find "$workdir/data" -type f -o -type l | sed "s#$workdir/data##" | sort > "$workdir/files"
+          cat > "$workdir/expected" <<'EOF'
+          /etc/bird/bird.conf
+          /etc/bird/envvars
+          /etc/init.d/bird
+          /usr/lib/bird/prepare-environment
+          /usr/lib/systemd/system/bird.service
+          /usr/sbin/bird
+          /usr/sbin/birdc
+          /usr/sbin/birdcl
+          EOF
+          diff -u "$workdir/expected" "$workdir/files"
+
+      - name: Upload Debian artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: bird3-debian-trixie-amd64
+          path: debian-artifacts/*
