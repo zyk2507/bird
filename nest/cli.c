@@ -67,8 +67,12 @@
 #include "nest/cli.h"
 #include "conf/conf.h"
 #include "lib/string.h"
+#include "lib/socket.h"
+#include "nest/cbor_parse.h"
 
 pool *cli_pool;
+pool *yi_pool;
+static struct linpool *yi_lnpool;
 
 static byte *
 cli_alloc_out(cli *c, int size)
@@ -162,6 +166,27 @@ static void
 cli_hello(cli *c)
 {
   cli_printf(c, 1, "BIRD " BIRD_VERSION " ready.");
+  c->cont = NULL;
+}
+
+static uint
+yi_hello_message(byte *buff)
+{
+  byte hello[] = { 0x87, 'B', 'I', 'R', 'D', 0x0d, 0x0a, 0x1a, 0x0a, 0x01 };
+  memcpy(buff, hello, sizeof(hello));
+  return sizeof(hello);
+}
+
+static void
+yi_hello(cli *c)
+{
+  sock *s = c->sock;
+  ASSERT_DIE(s);
+
+  uint len = yi_hello_message(s->tbuf);
+  if (sk_send(s, len) <= 0)
+    return;
+
   c->cont = NULL;
 }
 
@@ -300,6 +325,15 @@ cli_event(void *data)
     ev_schedule(c->event);
 }
 
+static void
+yi_event(void *data)
+{
+  cli *c = data;
+
+  if (c->cont)
+    c->cont(c);
+}
+
 cli *
 cli_new(struct birdsock *sock, struct cli_config *cf)
 {
@@ -314,6 +348,32 @@ cli_new(struct birdsock *sock, struct cli_config *cf)
   c->event->hook = cli_event;
   c->event->data = c;
   c->cont = cli_hello;
+  c->parser_pool = lp_new_default(c->pool);
+  c->rx_buf = mb_alloc(c->pool, CLI_RX_BUF_SIZE);
+
+  if (cf->restricted)
+    c->restricted = 1;
+
+  c->v2attributes = cf->v2attributes;
+
+  ev_schedule(c->event);
+  return c;
+}
+
+cli *
+cli_yi_new(struct birdsock *sock, struct cli_config *cf)
+{
+  pool *p = rp_new(cli_pool, the_bird_domain.the_bird, "YI");
+  struct cli_tx_resource *ctr = ralloc(p, &cli_tx_resource_class);
+  cli *c = ctr->c = mb_alloc(p, sizeof(cli));
+
+  bzero(c, sizeof(cli));
+  c->pool = p;
+  c->sock = sock;
+  c->event = ev_new(p);
+  c->event->hook = yi_event;
+  c->event->data = c;
+  c->cont = yi_hello;
   c->parser_pool = lp_new_default(c->pool);
   c->rx_buf = mb_alloc(c->pool, CLI_RX_BUF_SIZE);
 
@@ -386,6 +446,18 @@ cli_free(cli *c)
   }
 }
 
+uint
+yi_process(uint size, byte *rbuf, byte *tbuf, uint tbsize)
+{
+  if (detect_down(size, rbuf))
+  {
+    order_shutdown(0);
+    return 0;
+  }
+
+  return parse_cbor(size, rbuf, tbuf, tbsize, yi_lnpool);
+}
+
 /**
  * cli_init - initialize the CLI module
  *
@@ -398,4 +470,11 @@ cli_init(void)
   cli_pool = rp_new(&root_pool, the_bird_domain.the_bird, "CLI");
   init_list(&cli_log_hooks);
   cli_log_inited = 1;
+}
+
+void
+yi_init(void)
+{
+  yi_pool = rp_new(&root_pool, the_bird_domain.the_bird, "YI");
+  yi_lnpool = lp_new_default(yi_pool);
 }

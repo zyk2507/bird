@@ -1,0 +1,44 @@
+module show_memory {
+
+  namespace "https://bird.nic.cz/yang/v2.15/cli-debug";
+  
+  prefix "memory";
+
+  description "cli show memory format";
+
+  grouping memory {
+    leaf effective {
+      type int32;
+    }
+    leaf overhead {
+      type int32;
+    }
+  } 
+
+  container message {
+    leaf header {
+        type string;
+    }
+    container body {
+      container routing_tables {
+        uses memory;
+      }
+      container route_attributes {
+        uses memory;
+      }
+      container protocols {
+        uses memory;
+      }
+      container current_config {
+        uses memory;
+      }
+      container standby_memory {
+        uses memory;
+      }
+      container total {
+        uses memory;
+      }
+    }
+  }
+}
+

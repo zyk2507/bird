@@ -431,9 +431,15 @@ static struct cli_config initial_control_socket_config = {
   .name = PATH_CONTROL_SOCKET,
   .mode = 0660,
 };
+static struct cli_config initial_yi_control_socket_config = {
+  .name = PATH_YI_CONTROL_SOCKET,
+  .mode = 0660,
+};
 #define path_control_socket initial_control_socket_config.name
+#define path_yi_control_socket initial_yi_control_socket_config.name
 
 static struct cli_config *main_control_socket_config = NULL;
+static struct cli_config *main_yi_control_socket_config = NULL;
 
 #define TLIST_PREFIX cli_listener
 #define TLIST_TYPE struct cli_listener
@@ -445,6 +451,8 @@ static struct cli_listener {
   sock *s;
   struct cli_config *config;
 } *main_control_socket = NULL;
+
+static struct cli_listener *main_yi_control_socket = NULL;
 
 #include "lib/tlists.h"
 
@@ -535,6 +543,17 @@ cli_rx(sock *s, uint size UNUSED)
   return 0;
 }
 
+static int
+yi_rx(sock *s, uint size)
+{
+  uint tx_len = yi_process(size, s->rbuf, s->tbuf, s->tbsize);
+
+  if (tx_len)
+    sk_send(s, tx_len);
+
+  return 1;
+}
+
 #define GLOBAL_CLI_DEBUG (atomic_load_explicit(&global_runtime, memory_order_relaxed)->cli_debug)
 
 static void
@@ -559,6 +578,14 @@ cli_connect_err(sock *s UNUSED, int err)
     log(L_INFO "Failed to accept CLI connection: %s", strerror(err));
 }
 
+static void
+yi_connect_err(sock *s UNUSED, int err)
+{
+  ASSERT_DIE(err);
+  if (GLOBAL_CLI_DEBUG)
+    log(L_INFO "Failed to accept YI connection: %s", strerror(err));
+}
+
 static int
 cli_connect(sock *s, uint size UNUSED)
 {
@@ -571,6 +598,25 @@ cli_connect(sock *s, uint size UNUSED)
   s->err_hook = cli_err;
   s->data = c = cli_new(s, ((struct cli_listener *) s->data)->config);
   s->pool = c->pool;		/* We need to have all the socket buffers allocated in the cli pool */
+  s->fast_rx = 1;
+  c->rx_pos = c->rx_buf;
+  rmove(s, c->pool);
+  return 1;
+}
+
+static int
+yi_connect(sock *s, uint size UNUSED)
+{
+  cli *c;
+
+  if (GLOBAL_CLI_DEBUG)
+    log(L_INFO "YI connect");
+
+  s->rx_hook = yi_rx;
+  s->tx_hook = NULL;
+  s->err_hook = cli_err;
+  s->data = c = cli_yi_new(s, ((struct cli_listener *) s->data)->config);
+  s->pool = c->pool;
   s->fast_rx = 1;
   c->rx_pos = c->rx_buf;
   rmove(s, c->pool);
@@ -622,12 +668,67 @@ err:
   return NULL;
 }
 
+static struct cli_listener *
+yi_listen(struct cli_config *cf)
+{
+  struct cli_listener *l = mb_allocz(yi_pool, sizeof *l);
+  l->config = cf;
+  sock *s = l->s = sk_new(yi_pool);
+  s->type = SK_UNIX_PASSIVE;
+  s->rx_hook = yi_connect;
+  s->err_hook = yi_connect_err;
+  s->data = l;
+  s->rbsize = 8192;
+  s->tbsize = 262144;
+  s->fast_rx = 1;
+
+  /* Return value intentionally ignored */
+  unlink(cf->name);
+
+  if (sk_open_unix(s, &main_birdloop, cf->name) < 0)
+  {
+    log(L_ERR "Cannot create YI control socket %s: %m", cf->name);
+    goto err;
+  }
+
+  if (cf->uid || cf->gid)
+    if (chown(cf->name, cf->uid, cf->gid) < 0)
+    {
+      log(L_ERR "Cannot chown YI control socket %s: %m", cf->name);
+      goto err;
+    }
+
+  if (chmod(cf->name, cf->mode) < 0)
+  {
+    log(L_ERR "Cannot chmod YI control socket %s: %m", cf->name);
+    goto err;
+  }
+
+  return l;
+
+err:
+  rfree(s);
+  mb_free(l);
+  return NULL;
+}
+
 static void
 cli_deafen(struct cli_listener *l)
 {
   rfree(l->s);
   unlink(l->config->name);
   cli_listener_rem_node(&cli_listeners, l);
+  mb_free(l);
+}
+
+static void
+yi_deafen(struct cli_listener *l)
+{
+  if (!l)
+    return;
+
+  rfree(l->s);
+  unlink(l->config->name);
   mb_free(l);
 }
 
@@ -644,6 +745,21 @@ cli_init_unix(uid_t use_uid, gid_t use_gid)
   main_control_socket = cli_listen(main_control_socket_config);
   if (!main_control_socket)
     die("Won't run without control socket");
+}
+
+static void
+yi_init_unix(uid_t use_uid, gid_t use_gid)
+{
+  ASSERT_DIE(main_yi_control_socket_config == NULL);
+
+  main_yi_control_socket_config = &initial_yi_control_socket_config;
+  main_yi_control_socket_config->uid = use_uid;
+  main_yi_control_socket_config->gid = use_gid;
+
+  ASSERT_DIE(main_yi_control_socket == NULL);
+  main_yi_control_socket = yi_listen(main_yi_control_socket_config);
+  if (!main_yi_control_socket)
+    die("Won't run without YI control socket");
 }
 
 static void
@@ -769,6 +885,7 @@ void
 sysdep_shutdown_done(void)
 {
   unlink_pid_file();
+  yi_deafen(main_yi_control_socket);
   cli_deafen(main_control_socket);
   log_msg(L_FATAL "Shutdown completed");
   exit(0);
@@ -841,7 +958,7 @@ signal_init(void)
  *	Parsing of command-line arguments
  */
 
-static char *opt_list = "bc:dD:ps:P:u:g:flRh";
+static char *opt_list = "bc:dD:ps:P:u:g:flRhY:";
 int parse_and_exit;
 char *bird_name;
 static char *use_user;
@@ -876,6 +993,7 @@ display_help(void)
     "  -R                   Apply graceful restart recovery after start\n"
     "  -s <control-socket>  Use given filename for a control socket\n"
     "  -u <user>            Drop privileges and use given user ID\n"
+    "  -Y <yi-socket>       Use given filename for a YANG interface socket\n"
     "  --version            Display version of BIRD\n");
 
   exit(0);
@@ -953,6 +1071,7 @@ parse_args(int argc, char **argv)
 {
   int config_changed = 0;
   int socket_changed = 0;
+  int yi_socket_changed = 0;
   int c;
 
   bird_name = get_bird_name(argv[0], "bird");
@@ -984,6 +1103,10 @@ parse_args(int argc, char **argv)
 	path_control_socket = optarg;
 	socket_changed = 1;
 	break;
+      case 'Y':
+	path_yi_control_socket = optarg;
+	yi_socket_changed = 1;
+	break;
       case 'P':
 	pid_file = optarg;
 	break;
@@ -1001,6 +1124,8 @@ parse_args(int argc, char **argv)
 	  config_name = xbasename(config_name);
 	if (!socket_changed)
 	  path_control_socket = xbasename(path_control_socket);
+	if (!yi_socket_changed)
+	  path_yi_control_socket = xbasename(path_yi_control_socket);
 	break;
       case 'R':
 	graceful_restart_recovery();
@@ -1056,11 +1181,13 @@ main(int argc, char **argv)
   gid_t use_gid = get_gid(use_group);
 
   cli_init();
+  yi_init();
 
   if (!parse_and_exit)
   {
     test_old_bird(path_control_socket);
     cli_init_unix(use_uid, use_gid);
+    yi_init_unix(use_uid, use_gid);
   }
 
   if (use_gid)

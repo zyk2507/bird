@@ -1,0 +1,187 @@
+module show_protocols_all {
+
+  namespace ".";
+  
+  prefix "protocols_all";
+
+  import ietf-yang-types {
+     prefix yang;
+  }
+  
+  include "show_protocols_bgp";
+  include "show_protocols_rpki";
+
+  description "cli show protocols all format";
+
+
+  typedef status {
+    type enumeration {
+      enum idle;
+      enum connect;
+      enum active;
+      enum openSent;
+      enum openConfirm;
+      enum established;
+      enum close;
+    }
+  }
+
+  typedef state {
+    type enumeration {
+      enum up;
+      enum down;
+    }
+  }
+
+  grouping timer {
+    leaf remains {
+      type decimal64 {
+        fraction-digits 3;
+      }
+    }
+    leaf count_time {
+      type uint32;
+    }
+  }
+
+  grouping limits {
+    leaf dsc {
+      type string;
+    }
+    leaf limit {
+      type int32;
+    }
+    leaf hit {
+      type empty;
+    }
+    leaf action {
+      type string;
+    }
+  }
+
+  grouping stats_line {
+    leaf received {
+      type int32;
+    }
+    leaf rejected {
+      type int32;
+    }
+    leaf filtered {
+      type int32;
+    }
+    leaf ignored {
+      type int32;
+    }
+    leaf accepted {
+      type int32;
+    }
+  }
+
+  container message {
+    list table {
+      key "name";
+      leaf name {
+        type string;
+      }
+      leaf proto {
+        type string;
+      }
+      leaf table {
+        type string;
+      }
+      leaf state {
+        type state;
+      }
+      leaf since {
+        type yang:date-and-time;
+      }
+      leaf info {
+        type string;
+      }
+
+      choice details {
+        mandatory false;
+
+        case bgp {
+          container bgp {
+            uses bgp_details;
+          }
+        }
+        case rpki {
+          container rpki {
+            uses rpki_details;
+          }
+        }
+      }
+      list channels {
+        key name;
+        leaf name {
+          type string;
+        }
+        leaf state {
+          type state;
+        }
+        leaf table {
+          type string;
+        }
+        leaf preference {
+          type int32;
+        }
+        leaf input_filter {
+          type string;
+        }
+        leaf output_filter {
+          type string;
+        }
+        container gr_restart {
+          leaf pending {
+           type empty;
+          }
+          leaf waiting {
+            type empty;
+          }
+        }
+        container receive_limit {
+          uses limits;
+        }
+        container import_limit {
+          uses limits;
+        }
+        container export_limit {
+          uses limits;
+        }
+        container channel_show_stats {
+          container routes {
+            leaf imported {
+              type uint32;
+            }
+            leaf filtered {
+              type uint32;
+            }
+            leaf exported {
+              type uint32;
+            }
+            leaf preferred {
+              type uint32;
+            }
+          }
+          container route_stats {
+            container import_updates {
+              uses stats_line;
+            }
+            container import_withdraws {
+              uses stats_line;
+            }
+            container export_updates {
+              uses stats_line;
+            }
+            container export_withdraws {
+              uses stats_line;
+            }
+          }
+        }
+      }
+    }
+  }
+}
+

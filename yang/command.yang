@@ -1,0 +1,18 @@
+module command {
+
+  namespace "command";
+  
+  prefix "command";
+
+  container do {
+    leaf command {
+      type uint32;
+    }
+    list args {
+      key "arg";
+      leaf arg {
+        type string;
+      }
+    }
+  }
+}
