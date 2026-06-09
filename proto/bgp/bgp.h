@@ -164,6 +164,8 @@ struct bgp_config {
   int require_llgr;			/* Require remote support for long-lived graceful restart [RFC 9494] */
   uint tx_size_warning;			/* The maximum amount of memory which is not logged as warning */
   struct bfd_options *bfd;		/* Use BFD for liveness detection */
+  struct bgp_damp_config damp;		/* Default BGP route flap dampening config */
+  u8 damp_set;				/* Dampening default explicitly configured */
 };
 
 struct bgp_channel_config {
@@ -193,6 +195,7 @@ struct bgp_channel_config {
   u8 aigp;				/* AIGP is allowed on this session */
   u8 aigp_originate;			/* AIGP is originated automatically */
   struct bgp_damp_config damp;		/* BGP route flap dampening */
+  u8 damp_set;				/* Dampening explicitly configured */
   u32 cost;				/* IGP cost for direct next hops */
   u8 import_table;			/* Use c.in_table as Adj-RIB-In */
   u8 export_table;			/* Keep Adj-RIB-Out and export it */

@@ -3206,6 +3206,7 @@ protocol bgp [<name>] {
 		require extended next hop <switch>;
 		add paths <switch>|rx|tx;
 		require add paths <switch>;
+		dampening [on|yes|off|no|<half-life>|<half-life> <reuse> <suppress> <max-suppress-time>];
 		aigp <switch>|originate;
 		cost <number>;
 		graceful restart <switch>;
@@ -3228,6 +3229,7 @@ protocol bgp [<name>] {
 	free bind <switch>;
 	check link <switch>;
 	bfd <switch>|graceful| { <bfd-options> };
+	dampening [on|yes|off|no|<half-life>|<half-life> <reuse> <suppress> <max-suppress-time>];
 	ttl security <switch>;
 	authentication none|md5|ao;
 	password "<text>";
@@ -3462,6 +3464,26 @@ protocol bgp [<name>] {
 	just the switch argument. All BFD session-specific options are allowed
 	here. Note that BFD protocol also has to be configured, see
 	<ref id="bfd" name="BFD"> section for details. Default: disabled.
+
+	<tag><label id="bgp-dampening">dampening [on|yes|off|no|<m/half-life/|<m/half-life/ <m/reuse/ <m/suppress/ <m/max-suppress-time/]</tag>
+	Enable BGP route flap dampening for routes received from external BGP
+	neighbors. When a route is repeatedly withdrawn or changed, BIRD
+	accumulates a penalty, suppresses the route when the penalty reaches
+	<m/suppress/, and reuses it when the penalty decays below <m/reuse/.
+	The <m/half-life/ and <m/max-suppress-time/ values are in minutes;
+	<m/reuse/ and <m/suppress/ are penalty values. Ranges are:
+	<m/half-life/ 1-45, <m/reuse/ 1-20000, <m/suppress/ 1-20000, and
+	<m/max-suppress-time/ 1-255. The <m/suppress/ value must be greater
+	than or equal to <m/reuse/.
+
+	When used at protocol level, this option defines the default dampening
+	configuration for all BGP AFI/SAFI channels in the protocol. A channel
+	<ref id="bgp-dampening-c" name="dampening"> option overrides this
+	default, including <cf/dampening off/. With no arguments, or with
+	<cf/on/ or <cf/yes/, the defaults are half-life 15, reuse 750, suppress
+	2000, and max-suppress-time 60. With just <m/half-life/, reuse and
+	suppress keep their default values and max-suppress-time is four times
+	the half-life. Default: disabled.
 
 	<tag><label id="bgp-ttl-security">ttl security <m/switch/</tag>
 	Use GTSM (<rfc id="5082"> - the generalized TTL security mechanism). GTSM
@@ -4180,6 +4202,14 @@ allowed in dynamic BGP instances (those configured with <cf/neighbor range/).
 	configured locally, then the neighbor capability must announce RX.
 	Default: off.
 
+	<tag><label id="bgp-dampening-c">dampening [on|yes|off|no|<m/half-life/|<m/half-life/ <m/reuse/ <m/suppress/ <m/max-suppress-time/]</tag>
+	Configure route flap dampening for this AFI/SAFI channel. The argument
+	meaning and limits are the same as for the protocol-wide
+	<ref id="bgp-dampening" name="dampening"> option. This option overrides
+	the protocol-wide default for the channel; <cf/dampening off/ explicitly
+	disables dampening for the channel even when it is enabled by the
+	protocol default. Default: set by protocol-wide option, or disabled.
+
 	<tag><label id="bgp-aigp">aigp <m/switch/|originate</tag>
 	The BGP protocol does not use a common metric like other routing
 	protocols, instead it uses a set of criteria for route selection
@@ -4511,6 +4541,40 @@ protocol bgp {
 		export filter someotherfilter;
 		table mymulticasttable4; # Another IPv4 table, dedicated for multicast
 		igp table myigptable4;
+	};
+}
+</code>
+
+<p>Route flap dampening can be configured as a protocol-wide default and then
+overridden per AFI/SAFI channel. BGP templates inherit both the protocol default
+and channel overrides:
+
+<p><code>
+template bgp ebgp_damped {
+	local as 65000;
+	dampening 15 750 2000 60;	# Default for all BGP channels
+
+	ipv4 {
+		import none;
+		export none;
+	};
+
+	ipv6 {
+		import none;
+		export none;
+		dampening off;		# Override the protocol default
+	};
+}
+
+protocol bgp edge1 from ebgp_damped {
+	neighbor 198.51.100.1 as 64496;
+}
+
+protocol bgp edge2 from ebgp_damped {
+	neighbor 198.51.100.2 as 64497;
+
+	ipv4 {
+		dampening 30 1000 3000 90;	# Override inherited IPv4 default
 	};
 }
 </code>
