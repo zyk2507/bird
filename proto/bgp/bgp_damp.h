@@ -16,6 +16,7 @@
 
 struct bgp_channel;
 struct bgp_damp_info;
+struct proto;
 
 struct bgp_damp_config {
   uint enabled;
@@ -70,6 +71,8 @@ void bgp_damp_start(struct bgp_channel *c);
 void bgp_damp_shutdown(struct bgp_channel *c);
 void bgp_damp_refresh_begin(struct bgp_channel *c);
 void bgp_damp_refresh_end(struct bgp_channel *c);
+void bgp_damp_show(struct proto *P, int verbose);
+void bgp_damp_show_channel_summary(struct bgp_channel *c);
 
 int bgp_damp_withdraw(struct bgp_channel *c, const net_addr *n,
 		      struct rte_src *src, int attr_change);

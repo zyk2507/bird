@@ -8,6 +8,7 @@
 #include <math.h>
 
 #include "nest/bird.h"
+#include "nest/cli.h"
 #include "nest/protocol.h"
 #include "nest/route.h"
 #include "lib/hash.h"
@@ -61,6 +62,16 @@ struct bgp_damp_info {
 HASH_DEFINE_REHASH_FN(BDH, struct bgp_damp_info)
 
 static void bgp_damp_reuse_timer(timer *t);
+
+
+struct bgp_damp_stats {
+  uint history;
+  uint suppressed;
+  uint stored;
+  uint stale;
+  uint max_penalty;
+  uint total_flaps;
+};
 
 
 void
@@ -386,6 +397,203 @@ bgp_damp_refresh_end(struct bgp_channel *c)
     if (bdi->stale)
       bgp_damp_info_free(bdi, 0);
   HASH_WALK_DELSAFE_END;
+}
+
+static inline uint
+bgp_damp_current_penalty(struct bgp_damp_info *bdi, struct bgp_damp_state *st,
+			 btime now)
+{
+  uint tdiff = (now > bdi->t_updated) ? ((now - bdi->t_updated) TO_S) : 0;
+  return bgp_damp_decay(tdiff, bdi->penalty, st);
+}
+
+static uint
+bgp_damp_reuse_time(uint penalty, struct bgp_damp_state *st)
+{
+  if (!st->active || (penalty <= st->cfg.reuse_limit))
+    return 0;
+
+  double reuse_time =
+    (double) st->cfg.half_life * log2((double) penalty / st->cfg.reuse_limit);
+
+  if (reuse_time < 0)
+    return 0;
+
+  if (reuse_time > st->cfg.max_suppress_time)
+    return st->cfg.max_suppress_time;
+
+  return (uint) ceil(reuse_time);
+}
+
+static const char *
+bgp_damp_last_record_name(uint lastrecord)
+{
+  switch (lastrecord)
+  {
+  case BGP_RECORD_UPDATE:
+    return "update";
+  case BGP_RECORD_WITHDRAW:
+    return "withdraw";
+  default:
+    return "none";
+  }
+}
+
+static const char *
+bgp_damp_channel_state_name(struct bgp_channel *c)
+{
+  struct bgp_proto *p = (void *) c->c.proto;
+
+  if (!c->cf->damp.enabled)
+    return "disabled";
+
+  if (c->damp.active)
+    return "active";
+
+  if (p->is_interior)
+    return "inactive (interior session)";
+
+  if (c->c.channel_state != CS_UP)
+    return "inactive (channel not up)";
+
+  return "inactive";
+}
+
+static void
+bgp_damp_collect_stats(struct bgp_channel *c, struct bgp_damp_stats *stats)
+{
+  struct bgp_damp_state *st = &c->damp;
+  btime now = current_time();
+
+  memset(stats, 0, sizeof(*stats));
+
+  if (!st->active)
+    return;
+
+  HASH_WALK(st->info_hash, next, bdi)
+  {
+    uint penalty = bgp_damp_current_penalty(bdi, st, now);
+
+    stats->history++;
+    stats->total_flaps += bdi->flap;
+
+    if (bdi->suppressed)
+      stats->suppressed++;
+
+    if (bdi->stored_ea)
+      stats->stored++;
+
+    if (bdi->stale)
+      stats->stale++;
+
+    if (penalty > stats->max_penalty)
+      stats->max_penalty = penalty;
+  }
+  HASH_WALK_END;
+}
+
+void
+bgp_damp_show_channel_summary(struct bgp_channel *c)
+{
+  struct bgp_damp_stats stats;
+
+  if (!c->cf->damp.enabled)
+    return;
+
+  bgp_damp_collect_stats(c, &stats);
+
+  cli_msg(-1006, "    Dampening:      %s, %u suppressed, %u tracked, max penalty %u",
+	  bgp_damp_channel_state_name(c), stats.suppressed, stats.history,
+	  stats.max_penalty);
+}
+
+static void
+bgp_damp_show_entry(struct bgp_damp_info *bdi, struct bgp_damp_state *st,
+		    btime now)
+{
+  uint penalty = bgp_damp_current_penalty(bdi, st, now);
+  uint reuse_time = bdi->suppressed ? bgp_damp_reuse_time(penalty, st) : 0;
+  uint path_id = (uint) bdi->path_id;
+
+  if (bdi->suppressed)
+    cli_msg(-1006, "    %N path-id %u penalty %u flaps %u last %s suppressed for %t reuse in %t%s",
+	    bdi->net, path_id, penalty, bdi->flap,
+	    bgp_damp_last_record_name(bdi->lastrecord),
+	    now - bdi->suppress_time, reuse_time S,
+	    bdi->stored_ea ? " stored-update" : "");
+  else
+    cli_msg(-1006, "    %N path-id %u penalty %u flaps %u last %s age %t last-change %t%s%s",
+	    bdi->net, path_id, penalty, bdi->flap,
+	    bgp_damp_last_record_name(bdi->lastrecord),
+	    now - bdi->start_time, now - bdi->t_updated,
+	    bdi->stored_ea ? " stored-update" : "",
+	    bdi->stale ? " stale" : "");
+}
+
+static void
+bgp_damp_show_channel(struct bgp_channel *c, int verbose)
+{
+  struct bgp_damp_config *cf = &c->cf->damp;
+  struct bgp_damp_state *st = &c->damp;
+  struct bgp_damp_stats stats;
+  btime now = current_time();
+  int shown = 0;
+
+  cli_msg(-1006, "  Channel %s:", c->c.name);
+  cli_msg(-1006, "    State:          %s", bgp_damp_channel_state_name(c));
+
+  if (!cf->enabled)
+    return;
+
+  cli_msg(-1006, "    Half-life:      %u min", cf->half_life / 60);
+  cli_msg(-1006, "    Reuse limit:    %u", cf->reuse_limit);
+  cli_msg(-1006, "    Suppress value: %u", cf->suppress_value);
+  cli_msg(-1006, "    Max suppress:   %u min", cf->max_suppress_time / 60);
+
+  bgp_damp_collect_stats(c, &stats);
+  cli_msg(-1006, "    Routes:         %u tracked, %u suppressed, %u stored updates, %u stale",
+	  stats.history, stats.suppressed, stats.stored, stats.stale);
+  cli_msg(-1006, "    Flaps:          %u total, max penalty %u",
+	  stats.total_flaps, stats.max_penalty);
+
+  if (!st->active || !stats.history)
+    return;
+
+  if (verbose)
+    cli_msg(-1006, "    Tracked routes:");
+  else if (stats.suppressed)
+    cli_msg(-1006, "    Suppressed routes:");
+  else
+    return;
+
+  HASH_WALK(st->info_hash, next, bdi)
+  {
+    if (verbose || bdi->suppressed)
+    {
+      bgp_damp_show_entry(bdi, st, now);
+      shown++;
+    }
+  }
+  HASH_WALK_END;
+
+  if (!shown)
+    cli_msg(-1006, "    No dampened routes");
+}
+
+void
+bgp_damp_show(struct proto *P, int verbose)
+{
+  struct bgp_proto *p = (void *) P;
+  struct bgp_channel *c;
+
+  if (P->proto != &proto_bgp)
+    return;
+
+  cli_msg(-1006, "BGP route flap dampening for %s:", P->name);
+
+  WALK_LIST(c, p->p.channels)
+    if (c->c.class == &channel_bgp)
+      bgp_damp_show_channel(c, verbose);
 }
 
 int
