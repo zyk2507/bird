@@ -123,6 +123,11 @@ AC_SEARCH_LIBS([clock_gettime], [rt posix4],
   [AC_MSG_ERROR([Function clock_gettime not available.])]
 )
 
+AC_SEARCH_LIBS([pow], [m],
+  [],
+  [AC_MSG_ERROR([Math library not available.])]
+)
+
 AC_CANONICAL_HOST
 
 # Store this value because ac_test_CFLAGS is overwritten by AC_PROG_CC

@@ -130,6 +130,7 @@
 #include "lib/string.h"
 
 #include "bgp.h"
+#include "proto/bgp/bgp_damp.h"
 #include "proto/bmp/bmp.h"
 
 
@@ -1287,7 +1288,7 @@ bgp_conn_enter_established_state(struct bgp_conn *conn)
 
     int active = loc->ready && rem->ready;
     c->c.disabled = !active;
-    c->c.reloadable = p->route_refresh || c->cf->import_table;
+    c->c.reloadable = p->route_refresh || (c->cf->import_table && !c->damp.active);
 
     c->index = active ? num++ : 0;
 
@@ -1597,6 +1598,7 @@ bgp_refresh_begin(struct bgp_channel *c)
   { log(L_WARN "%s: BEGIN-OF-RR received before END-OF-RIB, ignoring", p->p.name); return; }
 
   c->load_state = BFS_REFRESHING;
+  bgp_damp_refresh_begin(c);
   rt_refresh_begin(c->c.table, &c->c);
 
   if (c->c.in_table)
@@ -1621,6 +1623,7 @@ bgp_refresh_end(struct bgp_channel *c)
   { log(L_WARN "%s: END-OF-RR received without prior BEGIN-OF-RR, ignoring", p->p.name); return; }
 
   c->load_state = BFS_NONE;
+  bgp_damp_refresh_end(c);
   rt_refresh_end(c->c.table, &c->c);
 
   if (c->c.in_table)
@@ -2266,7 +2269,7 @@ bgp_reload_routes(struct channel *C)
   if (C == p->p.mpls_channel)
   {
     BGP_WALK_CHANNELS(p, c)
-      if ((c->desc->mpls) && (p->route_refresh || c->c.in_table))
+      if ((c->desc->mpls) && c->c.reloadable)
 	bgp_reload_routes(&c->c);
 
     return;
@@ -2276,9 +2279,9 @@ bgp_reload_routes(struct channel *C)
   if (C->channel != &channel_bgp)
     return;
 
-  ASSERT(p->conn && (p->route_refresh || c->c.in_table));
+  ASSERT(p->conn && (p->route_refresh || (c->c.in_table && !c->damp.active)));
 
-  if (c->c.in_table)
+  if (c->c.in_table && !c->damp.active)
     channel_schedule_reload(C);
   else
     bgp_schedule_packet(p->conn, c, PKT_ROUTE_REFRESH);
@@ -2667,6 +2670,7 @@ bgp_channel_start(struct channel *C)
   c->pool = p->p.pool; // XXXX
   bgp_init_bucket_table(c);
   bgp_init_prefix_table(c);
+  bgp_damp_start(c);
 
   if (c->cf->import_table)
     channel_setup_in_table(C);
@@ -2735,6 +2739,8 @@ bgp_channel_shutdown(struct channel *C)
 {
   struct bgp_channel *c = (void *) C;
 
+  bgp_damp_shutdown(c);
+
   c->next_hop_addr = IPA_NONE;
   c->link_addr = IPA_NONE;
   c->packets_to_send = 0;
@@ -2756,6 +2762,8 @@ bgp_channel_cleanup(struct channel *C)
     rt_flowspec_unlink(c->base_table, c->c.table);
     rt_unlock_table(c->base_table);
   }
+
+  bgp_damp_shutdown(c);
 
   c->index = 0;
 
@@ -3233,6 +3241,11 @@ bgp_channel_reconfigure(struct channel *C, struct channel_config *CC, int *impor
       (new->llgr_time != old->llgr_time) ||
       (new->ext_next_hop != old->ext_next_hop) ||
       (new->add_path != old->add_path) ||
+      (new->damp.enabled != old->damp.enabled) ||
+      (new->damp.half_life != old->damp.half_life) ||
+      (new->damp.reuse_limit != old->damp.reuse_limit) ||
+      (new->damp.suppress_value != old->damp.suppress_value) ||
+      (new->damp.max_suppress_time != old->damp.max_suppress_time) ||
       (new->import_table != old->import_table) ||
       (new->export_table != old->export_table) ||
       (TABLE(new, igp_table_ip4) != TABLE(old, igp_table_ip4)) ||

@@ -37,7 +37,7 @@ CF_KEYWORDS(BGP, LOCAL, NEIGHBOR, AS, HOLD, TIME, CONNECT, RETRY, KEEPALIVE,
 	FIRST, FREE, VALIDATE, BASE, ROLE, ROLES, PEER, PROVIDER, CUSTOMER,
 	RS_SERVER, RS_CLIENT, REQUIRE, BGP_OTC, GLOBAL, SEND, RECV, MIN, MAX,
 	AUTHENTICATION, NONE, MD5, AO, FORMAT, NATIVE, SINGLE, DOUBLE,
-	BGP_PMSI_TUNNEL)
+	BGP_PMSI_TUNNEL, DAMPENING)
 
 CF_KEYWORDS(KEY, KEYS, SECRET, DEPRECATED, PREFERRED, ALGORITHM, CMAC, AES128)
 
@@ -452,6 +452,29 @@ bgp_channel_item:
  | ADD PATHS TX { BGP_CC->add_path = BGP_ADD_PATH_TX; }
  | ADD PATHS bool { BGP_CC->add_path = $3 ? BGP_ADD_PATH_FULL : 0; }
  | REQUIRE ADD PATHS bool { BGP_CC->require_add_path = $4; }
+ | DAMPENING { bgp_damp_config_set(&BGP_CC->damp, BGP_DAMP_DEFAULT_HALF_LIFE, BGP_DAMP_DEFAULT_REUSE, BGP_DAMP_DEFAULT_SUPPRESS, BGP_DAMP_DEFAULT_HALF_LIFE * 4); }
+ | DAMPENING ON { bgp_damp_config_set(&BGP_CC->damp, BGP_DAMP_DEFAULT_HALF_LIFE, BGP_DAMP_DEFAULT_REUSE, BGP_DAMP_DEFAULT_SUPPRESS, BGP_DAMP_DEFAULT_HALF_LIFE * 4); }
+ | DAMPENING YES { bgp_damp_config_set(&BGP_CC->damp, BGP_DAMP_DEFAULT_HALF_LIFE, BGP_DAMP_DEFAULT_REUSE, BGP_DAMP_DEFAULT_SUPPRESS, BGP_DAMP_DEFAULT_HALF_LIFE * 4); }
+ | DAMPENING OFF { BGP_CC->damp = (struct bgp_damp_config){}; }
+ | DAMPENING NO { BGP_CC->damp = (struct bgp_damp_config){}; }
+ | DAMPENING expr {
+    if (($2 < 1) || ($2 > 45))
+      cf_error("Dampening half-life must be in range 1-45");
+    bgp_damp_config_set(&BGP_CC->damp, $2, BGP_DAMP_DEFAULT_REUSE, BGP_DAMP_DEFAULT_SUPPRESS, $2 * 4);
+   }
+ | DAMPENING expr expr expr expr {
+    if (($2 < 1) || ($2 > 45))
+      cf_error("Dampening half-life must be in range 1-45");
+    if (($3 < 1) || ($3 > 20000))
+      cf_error("Dampening reuse value must be in range 1-20000");
+    if (($4 < 1) || ($4 > 20000))
+      cf_error("Dampening suppress value must be in range 1-20000");
+    if (($5 < 1) || ($5 > 255))
+      cf_error("Dampening max suppress time must be in range 1-255");
+    if ($4 < $3)
+      cf_error("Dampening suppress value cannot be less than reuse value");
+    bgp_damp_config_set(&BGP_CC->damp, $2, $3, $4, $5);
+   }
  | IMPORT TABLE bool { BGP_CC->import_table = $3; }
  | EXPORT TABLE bool { BGP_CC->export_table = $3; }
  | AIGP bool { BGP_CC->aigp = $2; BGP_CC->aigp_originate = 0; }

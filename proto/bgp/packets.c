@@ -26,6 +26,7 @@
 #include "nest/cli.h"
 
 #include "bgp.h"
+#include "proto/bgp/bgp_damp.h"
 #include "proto/bmp/bmp.h"
 
 
@@ -1596,8 +1597,14 @@ bgp_rte_update(struct bgp_parse_state *s, const net_addr *n, u32 path_id, rta *a
     if (s->err_withdraw && s->reach_nlri_step)
       REPORT("Invalid route %N withdrawn", n);
 
+    if (s->channel->c.in_table && !rte_update_in(&s->channel->c, n, NULL, s->last_src))
+      return;
+
+    if (bgp_damp_withdraw(s->channel, n, s->last_src, 0) == BGP_DAMP_SUPPRESSED)
+      return;
+
     /* Route withdraw */
-    rte_update3(&s->channel->c, n, NULL, s->last_src);
+    rte_update2(&s->channel->c, n, NULL, s->last_src);
     return;
   }
 
@@ -1613,7 +1620,19 @@ bgp_rte_update(struct bgp_parse_state *s, const net_addr *n, u32 path_id, rta *a
   rta *a = rta_clone(s->cached_rta);
   rte *e = rte_get_temp(a, s->last_src);
 
-  rte_update3(&s->channel->c, n, e, s->last_src);
+  if (s->channel->c.in_table && !rte_update_in(&s->channel->c, n, e, s->last_src))
+    return;
+
+  if (bgp_damp_update(s->channel, n, s->last_src, e->attrs) == BGP_DAMP_SUPPRESSED)
+  {
+    if (bgp_damp_has_visible_route(s->channel, n, s->last_src))
+      rte_update2(&s->channel->c, n, NULL, s->last_src);
+
+    rte_free(e);
+    return;
+  }
+
+  rte_update2(&s->channel->c, n, e, s->last_src);
 }
 
 static void
