@@ -907,6 +907,15 @@ that implicit tables (<cf/master4/ and <cf/master6/) can be redefined in order
 to set options.
 
 <descrip>
+	<tag><label id="rtable-model">model indexed|fib2</tag>
+	Selects the routing table storage backend. The <cf/indexed/ model is
+	the default BIRD 3 backend based on stable network indexes and route
+	slots. The <cf/fib2/ model uses a BIRD 2 style FIB hash backend for the
+	main route storage, while keeping BIRD 3 asynchronous export machinery.
+	Changing this option for an existing table is not supported by online
+	reconfiguration; restart BIRD or rebuild the table and related protocols.
+	Default: <cf/indexed/.
+
 	<tag><label id="rtable-sorted">sorted <m/switch/</tag>
 	Usually, a routing table just chooses the selected (best) route from a
 	list of routes for each network, while keeping remaining routes unsorted.

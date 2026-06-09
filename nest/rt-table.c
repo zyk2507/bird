@@ -218,6 +218,164 @@ struct rtable_reading {
   ASSERT_DIE(RT_IS_LOCKED(_o));	\
   struct rtable_reading _s##_i = { .t = RT_PUB(_o), .u = RCU_WONT_RETRY, }, *_i = &_s##_i;
 
+#define RT_FIB2_FEED_PAGE_BITS	10
+#define RT_FIB2_FEED_PAGE_SIZE	(1U << RT_FIB2_FEED_PAGE_BITS)
+#define RT_FIB2_FEED_PAGE_MASK	(RT_FIB2_FEED_PAGE_SIZE - 1)
+
+struct rt_fib2_net {
+  net n;
+  u32 feed_index;
+  struct fib_node fn;
+};
+
+static inline int
+rt_model_is_fib2(const rtable *t)
+{
+  return t->config->model == RTM_FIB2;
+}
+
+static inline const char *
+rt_model_name(uint model)
+{
+  switch (model)
+  {
+    case RTM_INDEXED: return "indexed";
+    case RTM_FIB2: return "fib2";
+    default: return "unknown";
+  }
+}
+
+static inline struct rt_fib2_net *
+rt_fib2_net_from_net(net *n)
+{
+  return SKIP_BACK(struct rt_fib2_net, n, n);
+}
+
+static inline net *
+rt_fib2_find_net(struct rtable_private *tab, const net_addr *addr)
+{
+  struct rt_fib2_net *fn = fib_find(&tab->fib2.fib, addr);
+  return fn ? &fn->n : NULL;
+}
+
+static net *
+rt_fib2_feed_get_net(struct rtable_private *tab, u32 index)
+{
+  u32 page = index >> RT_FIB2_FEED_PAGE_BITS;
+  u32 offset = index & RT_FIB2_FEED_PAGE_MASK;
+  u32 pages_count = atomic_load_explicit(&tab->fib2.feed_page_count, memory_order_acquire);
+
+  if (page >= pages_count)
+    return NULL;
+
+  net * _Atomic * _Atomic *pages = atomic_load_explicit(&tab->fib2.feed_pages, memory_order_acquire);
+  net * _Atomic *entries = atomic_load_explicit(&pages[page], memory_order_acquire);
+  if (!entries)
+    return NULL;
+
+  return atomic_load_explicit(&entries[offset], memory_order_acquire);
+}
+
+static void
+rt_fib2_feed_map_set(struct rtable_private *tab, u32 index, net *n)
+{
+  ASSERT_DIE(RT_IS_LOCKED(tab));
+
+  u32 page = index >> RT_FIB2_FEED_PAGE_BITS;
+  u32 offset = index & RT_FIB2_FEED_PAGE_MASK;
+  u32 pages_count = atomic_load_explicit(&tab->fib2.feed_page_count, memory_order_acquire);
+  net * _Atomic * _Atomic *pages = atomic_load_explicit(&tab->fib2.feed_pages, memory_order_acquire);
+
+  if (page >= pages_count)
+  {
+    u32 new_count = pages_count ?: 1;
+    while (page >= new_count)
+      new_count *= 2;
+
+    net * _Atomic * _Atomic *new_pages = mb_allocz(tab->rp, new_count * sizeof *new_pages);
+    if (pages_count)
+      for (u32 i = 0; i < pages_count; i++)
+	atomic_store_explicit(&new_pages[i], atomic_load_explicit(&pages[i], memory_order_acquire), memory_order_relaxed);
+
+    atomic_store_explicit(&tab->fib2.feed_pages, new_pages, memory_order_release);
+    atomic_store_explicit(&tab->fib2.feed_page_count, new_count, memory_order_release);
+
+    synchronize_rcu();
+    if (pages)
+      mb_free(pages);
+
+    pages = new_pages;
+  }
+
+  net * _Atomic *entries = atomic_load_explicit(&pages[page], memory_order_acquire);
+  if (!entries)
+  {
+    entries = mb_allocz(tab->rp, RT_FIB2_FEED_PAGE_SIZE * sizeof *entries);
+    atomic_store_explicit(&pages[page], entries, memory_order_release);
+  }
+
+  atomic_store_explicit(&entries[offset], n, memory_order_release);
+
+  u32 max = atomic_load_explicit(&tab->fib2.max_feed_index, memory_order_relaxed);
+  while ((index >= max) && !atomic_compare_exchange_weak_explicit(
+	&tab->fib2.max_feed_index, &max, index + 1,
+	memory_order_acq_rel, memory_order_relaxed));
+
+  max = atomic_load_explicit(&tab->fib2.max_feed_index, memory_order_acquire);
+  atomic_store_explicit(&tab->export_all.max_feed_index, max, memory_order_release);
+  atomic_store_explicit(&tab->export_best.max_feed_index, max, memory_order_release);
+}
+
+static void
+rt_fib2_feed_map_clear(struct rtable_private *tab, u32 index)
+{
+  u32 page = index >> RT_FIB2_FEED_PAGE_BITS;
+  u32 offset = index & RT_FIB2_FEED_PAGE_MASK;
+  u32 pages_count = atomic_load_explicit(&tab->fib2.feed_page_count, memory_order_acquire);
+
+  if (page >= pages_count)
+    return;
+
+  net * _Atomic * _Atomic *pages = atomic_load_explicit(&tab->fib2.feed_pages, memory_order_acquire);
+  net * _Atomic *entries = atomic_load_explicit(&pages[page], memory_order_acquire);
+  if (entries)
+    atomic_store_explicit(&entries[offset], NULL, memory_order_release);
+}
+
+static net *
+rt_fib2_get_net(struct rtable_private *tab, struct netindex *i)
+{
+  struct rt_fib2_net *fn = fib_find(&tab->fib2.fib, i->addr);
+  if (fn)
+    return &fn->n;
+
+  fn = fib_get(&tab->fib2.fib, i->addr);
+  fn->feed_index = i->index;
+  rt_fib2_feed_map_set(tab, i->index, &fn->n);
+  return &fn->n;
+}
+
+static int
+rt_fib2_net_empty(net *n)
+{
+  return
+    !atomic_load_explicit(&n->routes, memory_order_acquire) &&
+    !atomic_load_explicit(&n->all.first, memory_order_acquire) &&
+    !atomic_load_explicit(&n->best.first, memory_order_acquire);
+}
+
+static void
+rt_fib2_delete_empty_net(struct rtable_private *tab, net *n)
+{
+  if (!rt_model_is_fib2(RT_PUB(tab)) || !rt_fib2_net_empty(n))
+    return;
+
+  struct rt_fib2_net *fn = rt_fib2_net_from_net(n);
+  rt_fib2_feed_map_clear(tab, fn->feed_index);
+  synchronize_rcu();
+  fib_delete(&tab->fib2.fib, fn);
+}
+
 
 #define RTE_IS_OBSOLETE(s)  ((s)->rte.flags & REF_OBSOLETE)
 #define RTE_OBSOLETE_CHECK(tr, _s) ({	\
@@ -243,6 +401,9 @@ struct rtable_reading {
 static inline net *
 net_find(struct rtable_reading *tr, const struct netindex *i)
 {
+  if (rt_model_is_fib2(tr->t))
+    return rt_fib2_feed_get_net(&tr->t->priv, i->index);
+
   u32 rbs = atomic_load_explicit(&tr->t->routes_block_size, memory_order_acquire);
   if (i->index >= rbs)
     return NULL;
@@ -273,7 +434,6 @@ net_find_valid(struct rtable_reading *tr, netindex_hash *nh, const net_addr *add
 static inline void *
 net_route_ip6_sadr_trie(struct rtable_reading *tr, netindex_hash *nh, const net_addr_ip6_sadr *n0)
 {
-  u32 bs = atomic_load_explicit(&tr->t->routes_block_size, memory_order_acquire);
   const struct f_trie *trie = atomic_load_explicit(&tr->t->trie, memory_order_acquire);
   TRIE_WALK_TO_ROOT_IP6(trie, (const net_addr_ip6 *) n0, px)
   {
@@ -283,15 +443,9 @@ net_route_ip6_sadr_trie(struct rtable_reading *tr, netindex_hash *nh, const net_
 
     while (1)
     {
-      struct netindex *i = net_find_index(nh, &n.n);
-      if (i && (i->index < bs))
-      {
-	net *cur = &(atomic_load_explicit(&tr->t->routes, memory_order_acquire)[i->index]);
-	struct rte_storage *s = NET_READ_BEST_ROUTE(tr, cur);
-
-	if (s && rte_is_valid(&s->rte))
-	  return s;
-      }
+      net *cur = net_find_valid(tr, nh, &n.n);
+      if (cur)
+	return NET_READ_BEST_ROUTE(tr, cur);
 
       if (!n.ip6_sadr.src_pxlen)
 	break;
@@ -308,8 +462,6 @@ net_route_ip6_sadr_trie(struct rtable_reading *tr, netindex_hash *nh, const net_
 static inline void *
 net_route_ip6_sadr_fib(struct rtable_reading *tr, netindex_hash *nh, const net_addr_ip6_sadr *n0)
 {
-  u32 bs = atomic_load_explicit(&tr->t->routes_block_size, memory_order_acquire);
-
   net_addr_ip6_sadr n;
   net_copy_ip6_sadr(&n, n0);
 
@@ -321,15 +473,9 @@ net_route_ip6_sadr_fib(struct rtable_reading *tr, netindex_hash *nh, const net_a
 
     while (1)
     {
-      struct netindex *i = net_find_index(nh, &nn.n);
-      if (i && (i->index < bs))
-      {
-	net *cur = &(atomic_load_explicit(&tr->t->routes, memory_order_acquire)[i->index]);
-	struct rte_storage *s = NET_READ_BEST_ROUTE(tr, cur);
-
-	if (s && rte_is_valid(&s->rte))
-	  return s;
-      }
+      net *cur = net_find_valid(tr, nh, &nn.n);
+      if (cur)
+	return NET_READ_BEST_ROUTE(tr, cur);
 
       if (!nn.ip6_sadr.src_pxlen)
 	break;
@@ -2114,9 +2260,19 @@ rt_cleanup_find_net(struct rtable_private *tab, struct rt_pending_export *rpe)
     rpe->it.new->net :
     rpe->it.old->net;
   struct netindex *ni = NET_TO_INDEX(n);
-  ASSERT_DIE(ni->index < atomic_load_explicit(&tab->routes_block_size, memory_order_relaxed));
-  net *routes = atomic_load_explicit(&tab->routes, memory_order_relaxed);
-  return &routes[ni->index];
+  net *rn = NULL;
+
+  if (tab->config->model == RTM_FIB2)
+    rn = rt_fib2_feed_get_net(tab, ni->index);
+  else
+  {
+    ASSERT_DIE(ni->index < atomic_load_explicit(&tab->routes_block_size, memory_order_relaxed));
+    net *routes = atomic_load_explicit(&tab->routes, memory_order_relaxed);
+    rn = &routes[ni->index];
+  }
+
+  ASSERT_DIE(rn);
+  return rn;
 }
 
 static bool
@@ -2151,6 +2307,7 @@ rt_cleanup_export_best(struct lfjour *j, struct lfjour_item *i)
 
   /* Update the first and last pointers */
   rt_cleanup_update_pointers(&net->best, rpe);
+  rt_fib2_delete_empty_net(tab, net);
 }
 
 static void
@@ -2174,7 +2331,10 @@ rt_cleanup_export_all(struct lfjour *j, struct lfjour_item *i)
   }
 
   if (is_last)
+  {
     tab->gc_counter++;
+    rt_fib2_delete_empty_net(tab, net);
+  }
 }
 
 static void
@@ -2764,10 +2924,7 @@ rte_import(struct rt_import_request *req, const net_addr *n, rte *new, struct rt
 
   RT_LOCKED(hook->table, tab)
   {
-    u32 bs = atomic_load_explicit(&tab->routes_block_size, memory_order_acquire);
-
     struct netindex *i;
-    net *routes = atomic_load_explicit(&tab->routes, memory_order_acquire);
     net *nn;
     if (new)
     {
@@ -2780,33 +2937,44 @@ rte_import(struct rt_import_request *req, const net_addr *n, rte *new, struct rt
       i = net_get_index(tab->netindex, n);
       new->net = i->addr;
 
-      /* Block size update */
-      u32 nbs = bs;
-      while (i->index >= nbs)
-	nbs *= 2;
-
-      if (nbs > bs)
+      if (tab->config->model == RTM_FIB2)
+	nn = rt_fib2_get_net(tab, i);
+      else
       {
-	net *nb = mb_alloc(tab->rp, nbs * sizeof *nb);
-	memcpy(&nb[0], routes, bs * sizeof *nb);
-	memset(&nb[bs], 0, (nbs - bs) * sizeof *nb);
-	ASSERT_DIE(atomic_compare_exchange_strong_explicit(
-	      &tab->routes, &routes, nb,
-	      memory_order_acq_rel, memory_order_relaxed));
-	ASSERT_DIE(atomic_compare_exchange_strong_explicit(
-	      &tab->routes_block_size, &bs, nbs,
-	      memory_order_acq_rel, memory_order_relaxed));
-	ASSERT_DIE(atomic_compare_exchange_strong_explicit(
-	      &tab->export_all.max_feed_index, &bs, nbs,
-	      memory_order_acq_rel, memory_order_relaxed));
-	ASSERT_DIE(atomic_compare_exchange_strong_explicit(
-	      &tab->export_best.max_feed_index, &bs, nbs,
-	      memory_order_acq_rel, memory_order_relaxed));
+	u32 bs = atomic_load_explicit(&tab->routes_block_size, memory_order_acquire);
+	net *routes = atomic_load_explicit(&tab->routes, memory_order_acquire);
 
-	synchronize_rcu();
-	mb_free(routes);
+	/* Block size update */
+	u32 nbs = bs;
+	while (i->index >= nbs)
+	  nbs *= 2;
 
-	routes = nb;
+	if (nbs > bs)
+	{
+	  net *nb = mb_alloc(tab->rp, nbs * sizeof *nb);
+	  memcpy(&nb[0], routes, bs * sizeof *nb);
+	  memset(&nb[bs], 0, (nbs - bs) * sizeof *nb);
+	  ASSERT_DIE(atomic_compare_exchange_strong_explicit(
+		&tab->routes, &routes, nb,
+		memory_order_acq_rel, memory_order_relaxed));
+	  ASSERT_DIE(atomic_compare_exchange_strong_explicit(
+		&tab->routes_block_size, &bs, nbs,
+		memory_order_acq_rel, memory_order_relaxed));
+	  ASSERT_DIE(atomic_compare_exchange_strong_explicit(
+		&tab->export_all.max_feed_index, &bs, nbs,
+		memory_order_acq_rel, memory_order_relaxed));
+	  ASSERT_DIE(atomic_compare_exchange_strong_explicit(
+		&tab->export_best.max_feed_index, &bs, nbs,
+		memory_order_acq_rel, memory_order_relaxed));
+
+	  synchronize_rcu();
+	  mb_free(routes);
+
+	  routes = nb;
+	}
+
+	/* Resolve the net structure */
+	nn = &routes[i->index];
       }
 
       /* Update table tries */
@@ -2817,8 +2985,9 @@ rte_import(struct rt_import_request *req, const net_addr *n, rte *new, struct rt
       if (tab->trie_new)
 	trie_add_prefix(tab->trie_new, i->addr, i->addr->pxlen, i->addr->pxlen);
     }
-    else if ((i = net_find_index(tab->netindex, n)) && (i->index < bs))
-      /* Found an block where we can withdraw from */
+    else if ((i = net_find_index(tab->netindex, n)) &&
+	((nn = net_find(&(struct rtable_reading) { .t = RT_PUB(tab), .u = RCU_WONT_RETRY }, i))))
+      /* Found a net where we can withdraw from */
       ;
     else
     {
@@ -2829,11 +2998,9 @@ rte_import(struct rt_import_request *req, const net_addr *n, rte *new, struct rt
       return;
     }
 
-    /* Resolve the net structure */
-    nn = &routes[i->index];
-
     /* Recalculate the best route. */
     rte_recalculate(tab, hook, i, nn, new, src);
+    rt_fib2_delete_empty_net(tab, nn);
   }
 }
 
@@ -2844,6 +3011,9 @@ rte_import(struct rt_import_request *req, const net_addr *n, rte *new, struct rt
 static net *
 rt_net_feed_get_net(struct rtable_reading *tr, uint index)
 {
+  if (rt_model_is_fib2(tr->t))
+    return rt_fib2_feed_get_net(&tr->t->priv, index);
+
   /* Get the route block from the table */
   net *routes = atomic_load_explicit(&tr->t->routes, memory_order_acquire);
   u32 bs = atomic_load_explicit(&tr->t->routes_block_size, memory_order_acquire);
@@ -2967,9 +3137,15 @@ rt_net_feed_index(struct rtable_reading *tr, net *n, struct bmap *seen, bool (*p
 static struct rt_export_feed *
 rt_net_feed_internal(struct rtable_reading *tr, u32 index, struct bmap *seen, bool (*prefilter)(struct rt_export_feeder *, const net_addr *), struct rt_export_feeder *f, const struct rt_pending_export *first)
 {
-  net *n = rt_net_feed_get_net(tr, index);
-  if (!n)
+  if (rt_model_is_fib2(tr->t) &&
+      (index >= atomic_load_explicit(&tr->t->priv.fib2.max_feed_index, memory_order_acquire)))
     return &rt_feed_index_out_of_range;
+
+  net *n = rt_net_feed_get_net(tr, index);
+  if (!n && !rt_model_is_fib2(tr->t))
+    return &rt_feed_index_out_of_range;
+  if (!n)
+    return NULL;
 
   return rt_net_feed_index(tr, n, seen, prefilter, f, first);
 }
@@ -3020,6 +3196,9 @@ rt_feed_net_best(struct rt_exporter *e, struct rcu_unwinder *u, u32 index, struc
   RT_READ_ANCHORED(t, tr, u);
 
   net *n = rt_net_feed_get_net(tr, index);
+  if (!n && rt_model_is_fib2(t) &&
+      (index < atomic_load_explicit(&t->priv.fib2.max_feed_index, memory_order_acquire)))
+    return NULL;
   if (!n)
     return &rt_feed_index_out_of_range;
     /* No more to feed, we are fed up! */
@@ -3197,12 +3376,23 @@ rt_refresh_begin(struct rt_import_request *req)
     log(L_WARN "Route refresh flood in table %s (stale_set=%u, stale_pruned=%u)", hook->table->name, hook->stale_set, hook->stale_pruned);
 
     /* Forcibly set all old routes' stale cycle to zero. */
-    u32 bs = atomic_load_explicit(&tab->routes_block_size, memory_order_relaxed);
-    net *routes = atomic_load_explicit(&tab->routes, memory_order_relaxed);
-    for (u32 i = 0; i < bs; i++)
-      NET_WALK_ROUTES(tab, &routes[i], ep, e)
-	if (e->rte.sender == req->hook)
-	  e->stale_cycle = 0;
+    if (tab->config->model == RTM_FIB2)
+    {
+      FIB_WALK(&tab->fib2.fib, struct rt_fib2_net, fn)
+	NET_WALK_ROUTES(tab, &fn->n, ep, e)
+	  if (e->rte.sender == req->hook)
+	    e->stale_cycle = 0;
+      FIB_WALK_END;
+    }
+    else
+    {
+      u32 bs = atomic_load_explicit(&tab->routes_block_size, memory_order_relaxed);
+      net *routes = atomic_load_explicit(&tab->routes, memory_order_relaxed);
+      for (u32 i = 0; i < bs; i++)
+	NET_WALK_ROUTES(tab, &routes[i], ep, e)
+	  if (e->rte.sender == req->hook)
+	    e->stale_cycle = 0;
+    }
 
     /* Smash the route refresh counter and zero everything. */
     tab->rr_counter -= ((int) hook->stale_set - (int) hook->stale_pruned);
@@ -3289,16 +3479,27 @@ rte_dump(struct dump_request *dreq, struct rte_storage *e)
 void
 rt_dump(struct dump_request *dreq, rtable *tab)
 {
-  RT_READ(tab, tp);
-
   /* Looking at priv.deleted is technically unsafe but we don't care */
   RDUMP("Dump of routing table <%s>%s\n", tab->name, OBSREF_GET(tab->priv.deleted) ? " (deleted)" : "");
 
-  u32 bs = atomic_load_explicit(&tp->t->routes_block_size, memory_order_relaxed);
-  net *routes = atomic_load_explicit(&tp->t->routes, memory_order_relaxed);
-  for (u32 i = 0; i < bs; i++)
-    NET_READ_WALK_ROUTES(tp, &routes[i], ep, e)
-      rte_dump(dreq, e);
+  if (tab->config->model == RTM_FIB2)
+  {
+    RT_LOCKED(tab, tp)
+      FIB_WALK(&tp->fib2.fib, struct rt_fib2_net, fn)
+	NET_WALK_ROUTES(tp, &fn->n, ep, e)
+	  rte_dump(dreq, e);
+      FIB_WALK_END;
+  }
+  else
+  {
+    RT_READ(tab, tp);
+
+    u32 bs = atomic_load_explicit(&tp->t->routes_block_size, memory_order_relaxed);
+    net *routes = atomic_load_explicit(&tp->t->routes, memory_order_relaxed);
+    for (u32 i = 0; i < bs; i++)
+      NET_READ_WALK_ROUTES(tp, &routes[i], ep, e)
+	rte_dump(dreq, e);
+  }
 
   RDUMP("\n");
 }
@@ -3328,8 +3529,8 @@ rt_dump_hooks(struct dump_request *dreq, rtable *tp)
   {
 
   RDUMP("Dump of hooks in routing table <%s>%s\n", tab->name, OBSREF_GET(tab->deleted) ? " (deleted)" : "");
-  RDUMP("  nhu_state=%u use_count=%d rt_count=%u\n",
-      tab->nhu_state, tab->use_count, tab->rt_count);
+  RDUMP("  model=%s nhu_state=%u use_count=%d rt_count=%u\n",
+      rt_model_name(tab->config->model), tab->nhu_state, tab->use_count, tab->rt_count);
   RDUMP("  last_rt_change=%t gc_time=%t gc_counter=%d prune_state=%u\n",
       tab->last_rt_change, tab->gc_time, tab->gc_counter, tab->prune_state);
 
@@ -3761,8 +3962,8 @@ rt_res_dump(struct dump_request *dreq, resource *_r)
 {
   SKIP_BACK_DECLARE(struct rtable_private, r, r, _r);
 
-  RDUMP("name \"%s\", addr_type=%s, rt_count=%u, use_count=%d\n",
-      r->name, net_label[r->addr_type], r->rt_count, r->use_count);
+  RDUMP("name \"%s\", addr_type=%s, model=%s, rt_count=%u, use_count=%d\n",
+      r->name, net_label[r->addr_type], rt_model_name(r->config->model), r->rt_count, r->use_count);
 
   RDUMP("Exporter ALL:\n");
   dreq->indent += 3;
@@ -3832,8 +4033,17 @@ rt_setup(pool *pp, struct rtable_config *cf)
     rtable_max_id = t->id + 1;
 
   t->netindex = netindex_hash_new(birdloop_pool(t->loop), t->loop, cf->addr_type);
-  atomic_store_explicit(&t->routes, mb_allocz(p, RT_INITIAL_ROUTES_BLOCK_SIZE * sizeof(net)), memory_order_relaxed);
-  atomic_store_explicit(&t->routes_block_size, RT_INITIAL_ROUTES_BLOCK_SIZE, memory_order_relaxed);
+  if (cf->model == RTM_FIB2)
+  {
+    fib_init(&t->fib2.fib, p, cf->addr_type, sizeof(struct rt_fib2_net),
+	OFFSETOF(struct rt_fib2_net, fn), 0, NULL);
+    atomic_store_explicit(&t->fib2.max_feed_index, 0, memory_order_relaxed);
+  }
+  else
+  {
+    atomic_store_explicit(&t->routes, mb_allocz(p, RT_INITIAL_ROUTES_BLOCK_SIZE * sizeof(net)), memory_order_relaxed);
+    atomic_store_explicit(&t->routes_block_size, RT_INITIAL_ROUTES_BLOCK_SIZE, memory_order_relaxed);
+  }
 
   if (cf->trie_used)
   {
@@ -3862,7 +4072,7 @@ rt_setup(pool *pp, struct rtable_config *cf)
     },
     .name = mb_sprintf(p, "%s.export-best", t->name),
     .net_type = t->addr_type,
-    .max_feed_index = RT_INITIAL_ROUTES_BLOCK_SIZE,
+    .max_feed_index = (cf->model == RTM_FIB2) ? 0 : RT_INITIAL_ROUTES_BLOCK_SIZE,
     .netindex = t->netindex,
     .trace_routes = t->debug,
     .cleanup_done = rt_cleanup_done_best,
@@ -3880,7 +4090,7 @@ rt_setup(pool *pp, struct rtable_config *cf)
     },
     .name = mb_sprintf(p, "%s.export-all", t->name),
     .net_type = t->addr_type,
-    .max_feed_index = RT_INITIAL_ROUTES_BLOCK_SIZE,
+    .max_feed_index = (cf->model == RTM_FIB2) ? 0 : RT_INITIAL_ROUTES_BLOCK_SIZE,
     .netindex = t->netindex,
     .trace_routes = t->debug,
     .cleanup_done = rt_cleanup_done_all,
@@ -4092,7 +4302,11 @@ rt_prune_table(void *_tab)
 	rt_refresh_trace(tab, ih, "table prune after refresh begin");
       }
 
-    tab->prune_index = 0;
+    if (tab->config->model == RTM_FIB2)
+      FIB_ITERATE_INIT(&tab->fib2.prune_fit, &tab->fib2.fib);
+    else
+      tab->prune_index = 0;
+
     tab->prune_state = 2;
 
     tab->gc_counter = 0;
@@ -4106,14 +4320,26 @@ rt_prune_table(void *_tab)
     }
   }
 
-  u32 bs = atomic_load_explicit(&tab->routes_block_size, memory_order_relaxed);
-  net *routes = atomic_load_explicit(&tab->routes, memory_order_relaxed);
-  for (; tab->prune_index < bs; tab->prune_index++)
+  if (tab->config->model == RTM_FIB2)
+  {
+    FIB_ITERATE_START(&tab->fib2.fib, &tab->fib2.prune_fit, struct rt_fib2_net, fn)
     {
-      net *n = &routes[tab->prune_index];
+      net *n = &fn->n;
       while (rt_prune_net(tab, n))
-	MAYBE_DEFER_TASK(birdloop_event_list(tab->loop), tab->prune_event,
-	    "%s pruning", tab->name);
+	if (!task_still_in_limit())
+	{
+	  FIB_ITERATE_PUT(&tab->fib2.prune_fit);
+	  ev_send_loop(tab->loop, tab->prune_event);
+	  return;
+	}
+
+      if (rt_fib2_net_empty(n))
+      {
+	FIB_ITERATE_PUT_NEXT(&tab->fib2.prune_fit, &tab->fib2.fib);
+	rt_fib2_delete_empty_net(tab, n);
+	ev_send_loop(tab->loop, tab->prune_event);
+	return;
+      }
 
       struct rte_storage *e = NET_BEST_ROUTE(tab, n);
       if (tab->trie_new && e)
@@ -4121,7 +4347,36 @@ rt_prune_table(void *_tab)
 	const net_addr *a = e->rte.net;
 	trie_add_prefix(tab->trie_new, a, a->pxlen, a->pxlen);
       }
+
+      if (!task_still_in_limit())
+      {
+	FIB_ITERATE_PUT(&tab->fib2.prune_fit);
+	ev_send_loop(tab->loop, tab->prune_event);
+	return;
+      }
     }
+    FIB_ITERATE_END;
+    FIB_ITERATE_PUT_END(&tab->fib2.prune_fit);
+  }
+  else
+  {
+    u32 bs = atomic_load_explicit(&tab->routes_block_size, memory_order_relaxed);
+    net *routes = atomic_load_explicit(&tab->routes, memory_order_relaxed);
+    for (; tab->prune_index < bs; tab->prune_index++)
+      {
+	net *n = &routes[tab->prune_index];
+	while (rt_prune_net(tab, n))
+	  MAYBE_DEFER_TASK(birdloop_event_list(tab->loop), tab->prune_event,
+	      "%s pruning", tab->name);
+
+	struct rte_storage *e = NET_BEST_ROUTE(tab, n);
+	if (tab->trie_new && e)
+	{
+	  const net_addr *a = e->rte.net;
+	  trie_add_prefix(tab->trie_new, a, a->pxlen, a->pxlen);
+	}
+      }
+  }
 
   rt_trace(tab, D_EVENTS, "Prune done");
   lfjour_announce_now(&tab->export_all.journal);
@@ -4298,6 +4553,7 @@ rt_postconfig(struct config *c)
 	  cork_threshold,
 	  gc_threshold,
 	  gc_period,
+	  model,
 	  debug);
 #undef COPY
     }
@@ -4908,7 +5164,11 @@ rt_next_hop_update(void *_tab)
   /* Initialize a new run */
   if (tab->nhu_state == NHU_SCHEDULED)
   {
-    tab->nhu_index = 0;
+    if (tab->config->model == RTM_FIB2)
+      FIB_ITERATE_INIT(&tab->fib2.nhu_fit, &tab->fib2.fib);
+    else
+      tab->nhu_index = 0;
+
     tab->nhu_state = NHU_RUNNING;
 
     if (tab->flowspec_trie)
@@ -4916,21 +5176,46 @@ rt_next_hop_update(void *_tab)
   }
 
   /* Walk the fib one net after another */
-  u32 bs = atomic_load_explicit(&tab->routes_block_size, memory_order_relaxed);
-  net *routes = atomic_load_explicit(&tab->routes, memory_order_relaxed);
-  for (; tab->nhu_index < bs; tab->nhu_index++)
+  if (tab->config->model == RTM_FIB2)
+  {
+    FIB_ITERATE_START(&tab->fib2.fib, &tab->fib2.nhu_fit, struct rt_fib2_net, fn)
     {
-      net *n = &routes[tab->nhu_index];
+      net *n = &fn->n;
       struct rte_storage *s = NET_BEST_ROUTE(tab, n);
       if (!s)
 	continue;
 
-      MAYBE_DEFER_TASK(birdloop_event_list(tab->loop), tab->nhu_event,
-	  "next hop updater in %s", tab->name);
+      if (!task_still_in_limit())
+      {
+	FIB_ITERATE_PUT(&tab->fib2.nhu_fit);
+	ev_send_loop(tab->loop, tab->nhu_event);
+	return;
+      }
 
       TMP_SAVED
 	rt_next_hop_update_net(tab, RTE_GET_NETINDEX(&s->rte), n);
     }
+    FIB_ITERATE_END;
+    FIB_ITERATE_PUT_END(&tab->fib2.nhu_fit);
+  }
+  else
+  {
+    u32 bs = atomic_load_explicit(&tab->routes_block_size, memory_order_relaxed);
+    net *routes = atomic_load_explicit(&tab->routes, memory_order_relaxed);
+    for (; tab->nhu_index < bs; tab->nhu_index++)
+      {
+	net *n = &routes[tab->nhu_index];
+	struct rte_storage *s = NET_BEST_ROUTE(tab, n);
+	if (!s)
+	  continue;
+
+	MAYBE_DEFER_TASK(birdloop_event_list(tab->loop), tab->nhu_event,
+	    "next hop updater in %s", tab->name);
+
+	TMP_SAVED
+	  rt_next_hop_update_net(tab, RTE_GET_NETINDEX(&s->rte), n);
+      }
+  }
 
   /* Finished NHU, cleanup */
   rt_trace(tab, D_EVENTS, "NHU done, scheduling export timer");
@@ -4998,6 +5283,7 @@ rt_new_table(struct symbol *s, uint addr_type)
 
   c->name = s->name;
   c->addr_type = addr_type;
+  c->model = RTM_INDEXED;
   c->gc_threshold = 1000;
   c->gc_period = (uint) -1;	/* set in rt_postconfig() */
   c->cork_threshold.low = 32768;
@@ -5101,10 +5387,19 @@ rt_shutdown(void *tab_)
   /* Check that the table is indeed pruned */
   tab->prune_state = 0;
   ASSERT_DIE(EMPTY_LIST(tab->imports));
-  u32 bs = atomic_load_explicit(&tab->routes_block_size, memory_order_relaxed);
-  net *routes = atomic_load_explicit(&tab->routes, memory_order_relaxed);
-  for (u32 i = 0; i < bs; i++)
-    ASSERT_DIE(atomic_load_explicit(&routes[i].routes, memory_order_relaxed) == NULL);
+  if (tab->config->model == RTM_FIB2)
+  {
+    FIB_WALK(&tab->fib2.fib, struct rt_fib2_net, fn)
+      ASSERT_DIE(atomic_load_explicit(&fn->n.routes, memory_order_relaxed) == NULL);
+    FIB_WALK_END;
+  }
+  else
+  {
+    u32 bs = atomic_load_explicit(&tab->routes_block_size, memory_order_relaxed);
+    net *routes = atomic_load_explicit(&tab->routes, memory_order_relaxed);
+    for (u32 i = 0; i < bs; i++)
+      ASSERT_DIE(atomic_load_explicit(&routes[i].routes, memory_order_relaxed) == NULL);
+  }
 
   if (tab->export_digest)
   {
@@ -5175,8 +5470,8 @@ static void
 rt_check_cork_high(struct rtable_private *tab)
 {
   if (!OBSREF_GET(tab->deleted) && !tab->cork_active && (
-	(lfjour_pending_items(&tab->export_best.journal) >= tab->cork_threshold.low)
-     || (lfjour_pending_items(&tab->export_all.journal) >= tab->cork_threshold.low)))
+	(lfjour_pending_items(&tab->export_best.journal) >= tab->cork_threshold.high)
+     || (lfjour_pending_items(&tab->export_all.journal) >= tab->cork_threshold.high)))
   {
     tab->cork_active = 1;
     rt_cork_acquire();
@@ -5193,6 +5488,7 @@ static int
 rt_reconfigure(struct rtable_private *tab, struct rtable_config *new, struct rtable_config *old)
 {
   if ((new->addr_type != old->addr_type) ||
+      (new->model != old->model) ||
       (new->sorted != old->sorted) ||
       (new->trie_used != old->trie_used))
     return 0;

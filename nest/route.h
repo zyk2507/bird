@@ -46,6 +46,11 @@ struct f_trie;
 struct f_trie_walk_state;
 struct cli;
 
+enum rt_table_model {
+  RTM_INDEXED,
+  RTM_FIB2,
+};
+
 /*
  *	Master Routing Tables. Generally speaking, each of them contains a FIB
  *	with each entry pointing to a list of route entries representing routes
@@ -66,6 +71,7 @@ struct rtable_config {
   uint gc_threshold;			/* Maximum number of operations before GC is run */
   uint gc_period;			/* Approximate time between two consecutive GC runs */
   u32 debug;				/* Debugging flags (D_*) */
+  byte model;				/* Routing table backend model (RTM_*) */
   byte sorted;				/* Routes of network are sorted according to rte_better() */
   byte trie_used;			/* Rtable has attached trie */
   struct rt_cork_threshold {
@@ -440,6 +446,14 @@ struct rtable_private {
   struct rt_cork_threshold cork_threshold;	/* Threshold for table cork */
   u32 prune_index;			/* Rtable prune FIB iterator */
   u32 nhu_index;			/* Next Hop Update FIB iterator */
+  struct rt_fib2_backend {
+    struct fib fib;			/* BIRD 2 style FIB hash backend */
+    struct fib_iterator prune_fit;	/* FIB iterator for pruning */
+    struct fib_iterator nhu_fit;	/* FIB iterator for next-hop updates */
+    struct network * _Atomic * _Atomic * _Atomic feed_pages; /* Sparse feed-id -> network map */
+    _Atomic u32 feed_page_count;	/* Number of feed map root pages */
+    _Atomic u32 max_feed_index;		/* One past the highest known feed id */
+  } fib2;
   event *nhu_event;			/* Nexthop updater */
   struct f_trie *trie_new;		/* New prefix trie defined during pruning */
   const struct f_trie *trie_old;	/* Old prefix trie waiting to be freed */

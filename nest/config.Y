@@ -164,6 +164,7 @@ CF_KEYWORDS(TIMEFORMAT, ISO, SHORT, LONG, ROUTE, PROTOCOL, BASE, LOG, S, MS, US)
 CF_KEYWORDS(GRACEFUL, RESTART, WAIT, MAX, AS)
 CF_KEYWORDS(CHECK, LINK)
 CF_KEYWORDS(CORK, SORTED, TRIE, MIN, MAX, ROA, DIGEST, ROUTE, REFRESH, SETTLE, TIME, GC, THRESHOLD, PERIOD)
+CF_KEYWORDS(MODEL, INDEXED, FIB2)
 CF_KEYWORDS(MPLS_LABEL, MPLS_POLICY, MPLS_CLASS)
 CF_KEYWORDS(ASPA_PROVIDERS)
 
@@ -269,6 +270,8 @@ table_opt:
    }
  | GC THRESHOLD expr { this_table->gc_threshold = $3; }
  | GC PERIOD expr_us { this_table->gc_period = (uint) $3; if ($3 > 3600 S_) cf_error("GC period must be at most 3600 s"); }
+ | MODEL INDEXED { this_table->model = RTM_INDEXED; }
+ | MODEL FIB2 { this_table->model = RTM_FIB2; }
  | CORK THRESHOLD expr expr {
      if ($3 > $4) cf_error("Cork low threshold must be lower than the high threshold.");
      this_table->cork_threshold.low = $3;
