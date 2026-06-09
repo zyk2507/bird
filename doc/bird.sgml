@@ -1402,6 +1402,12 @@ This argument can be omitted if there exists only a single instance.
 	specified.
 
 	<!-- TODO: Move these protocol-specific remote control commands to the protocol sections -->
+	<tag><label id="cli-show-bgp-dampening">show bgp dampening [all] [<m/name/]</tag>
+	Show BGP route flap dampening state. Without <cf/all/>, the command
+	shows dampening parameters, counters, and currently suppressed routes.
+	With <cf/all/>, it also shows all tracked routes kept by the dampening
+	history.
+
 	<tag><label id="cli-show-ospf-iface">show ospf interface [<m/name/] ["<m/interface/"]</tag>
 	Show detailed information about OSPF interfaces.
 
@@ -3350,7 +3356,8 @@ protocol bgp [<name>] {
 	<cf/on/ or <cf/yes/, the defaults are half-life 15, reuse 750, suppress
 	2000, and max-suppress-time 60. With just <m/half-life/, reuse and
 	suppress keep their default values and max-suppress-time is four times
-	the half-life. Default: disabled.
+	the half-life. Default: disabled. Operational state can be inspected
+	with <ref id="cli-show-bgp-dampening" name="show bgp dampening">.
 
 	<tag><label id="bgp-ttl-security">ttl security <m/switch/</tag>
 	Use GTSM (<rfc id="5082"> - the generalized TTL security mechanism). GTSM

@@ -3716,6 +3716,8 @@ bgp_show_proto_info(struct proto *P)
 	  cli_msg(-1006, "    BGP Next hop:   %I %I", c->next_hop_addr, c->link_addr);
       }
 
+      bgp_damp_show_channel_summary(c);
+
       /* After channel is deconfigured, these pointers are no longer valid */
       if (!p->p.reconfiguring || (c->c.channel_state != CS_DOWN))
       {

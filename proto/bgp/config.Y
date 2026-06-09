@@ -589,6 +589,14 @@ dynamic_attr: BGP_LARGE_COMMUNITY
 dynamic_attr: BGP_OTC
 	{ $$ = f_new_dynamic_attr(EAF_TYPE_INT, T_INT, EA_CODE(PROTOCOL_BGP, BA_ONLY_TO_CUSTOMER));	$$.flags = BAF_OPTIONAL | BAF_TRANSITIVE; } ;
 
+CF_CLI_HELP(SHOW BGP DAMPENING, [all] [<name>], [[Show BGP route flap dampening state]]);
+
+CF_CLI(SHOW BGP DAMPENING, optproto, [<name>], [[Show BGP route flap dampening state]])
+{ PROTO_WALK_CMD($4, &proto_bgp, p) bgp_damp_show(p, 0); } ;
+
+CF_CLI(SHOW BGP DAMPENING ALL, optproto, [<name>], [[Show all BGP route flap dampening state]])
+{ PROTO_WALK_CMD($5, &proto_bgp, p) bgp_damp_show(p, 1); } ;
+
 custom_attr: ATTRIBUTE BGP expr type symbol ';' {
   if ($3 > 255 || $3 < 1)
     cf_error("Invalid attribute number (Given %i, must be 1-255)", $3);
