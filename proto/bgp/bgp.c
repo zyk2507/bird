@@ -2998,6 +2998,9 @@ bgp_postconfig(struct proto_config *CF)
   struct bgp_channel_config *cc;
   BGP_CF_WALK_CHANNELS(cf, cc)
   {
+    if (!cc->damp_set && cf->damp_set)
+      cc->damp = cf->damp;
+
     /* Handle undefined import filter */
     if (cc->c.in_filter == FILTER_UNDEF)
       if (interior)

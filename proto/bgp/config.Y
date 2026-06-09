@@ -18,6 +18,37 @@ CF_DEFINES
 static struct ao_config *this_ao_key;
 static struct ao_config **next_ao_key;
 
+static void
+bgp_damp_check_config(int half, int reuse, int suppress, int max)
+{
+  if ((half < 1) || (half > 45))
+    cf_error("Dampening half-life must be in range 1-45");
+  if ((reuse < 1) || (reuse > 20000))
+    cf_error("Dampening reuse value must be in range 1-20000");
+  if ((suppress < 1) || (suppress > 20000))
+    cf_error("Dampening suppress value must be in range 1-20000");
+  if ((max < 1) || (max > 255))
+    cf_error("Dampening max suppress time must be in range 1-255");
+  if (suppress < reuse)
+    cf_error("Dampening suppress value cannot be less than reuse value");
+}
+
+static void
+bgp_damp_config_default(struct bgp_damp_config *cf)
+{
+  bgp_damp_config_set(cf, BGP_DAMP_DEFAULT_HALF_LIFE,
+		      BGP_DAMP_DEFAULT_REUSE, BGP_DAMP_DEFAULT_SUPPRESS,
+		      BGP_DAMP_DEFAULT_HALF_LIFE * 4);
+}
+
+static void
+bgp_damp_config_checked(struct bgp_damp_config *cf, int half, int reuse,
+			int suppress, int max)
+{
+  bgp_damp_check_config(half, reuse, suppress, max);
+  bgp_damp_config_set(cf, half, reuse, suppress, max);
+}
+
 CF_DECLS
 
 CF_KEYWORDS(BGP, LOCAL, NEIGHBOR, AS, HOLD, TIME, CONNECT, RETRY, KEEPALIVE,
@@ -252,6 +283,19 @@ bgp_proto:
  | bgp_proto LOCAL ROLE bgp_role_name ';' { BGP_CFG->local_role = $4; }
  | bgp_proto REQUIRE ROLES bool ';' { BGP_CFG->require_roles = $4; }
  | bgp_proto DISABLE RX bool ';' { BGP_CFG->disable_rx = $4; }
+ | bgp_proto DAMPENING ';' { bgp_damp_config_default(&BGP_CFG->damp); BGP_CFG->damp_set = 1; }
+ | bgp_proto DAMPENING ON ';' { bgp_damp_config_default(&BGP_CFG->damp); BGP_CFG->damp_set = 1; }
+ | bgp_proto DAMPENING YES ';' { bgp_damp_config_default(&BGP_CFG->damp); BGP_CFG->damp_set = 1; }
+ | bgp_proto DAMPENING OFF ';' { BGP_CFG->damp = (struct bgp_damp_config){}; BGP_CFG->damp_set = 1; }
+ | bgp_proto DAMPENING NO ';' { BGP_CFG->damp = (struct bgp_damp_config){}; BGP_CFG->damp_set = 1; }
+ | bgp_proto DAMPENING expr ';' {
+    bgp_damp_config_checked(&BGP_CFG->damp, $3, BGP_DAMP_DEFAULT_REUSE, BGP_DAMP_DEFAULT_SUPPRESS, $3 * 4);
+    BGP_CFG->damp_set = 1;
+   }
+ | bgp_proto DAMPENING expr expr expr expr ';' {
+    bgp_damp_config_checked(&BGP_CFG->damp, $3, $4, $5, $6);
+    BGP_CFG->damp_set = 1;
+   }
  ;
 
 bgp_afi:
@@ -452,28 +496,18 @@ bgp_channel_item:
  | ADD PATHS TX { BGP_CC->add_path = BGP_ADD_PATH_TX; }
  | ADD PATHS bool { BGP_CC->add_path = $3 ? BGP_ADD_PATH_FULL : 0; }
  | REQUIRE ADD PATHS bool { BGP_CC->require_add_path = $4; }
- | DAMPENING { bgp_damp_config_set(&BGP_CC->damp, BGP_DAMP_DEFAULT_HALF_LIFE, BGP_DAMP_DEFAULT_REUSE, BGP_DAMP_DEFAULT_SUPPRESS, BGP_DAMP_DEFAULT_HALF_LIFE * 4); }
- | DAMPENING ON { bgp_damp_config_set(&BGP_CC->damp, BGP_DAMP_DEFAULT_HALF_LIFE, BGP_DAMP_DEFAULT_REUSE, BGP_DAMP_DEFAULT_SUPPRESS, BGP_DAMP_DEFAULT_HALF_LIFE * 4); }
- | DAMPENING YES { bgp_damp_config_set(&BGP_CC->damp, BGP_DAMP_DEFAULT_HALF_LIFE, BGP_DAMP_DEFAULT_REUSE, BGP_DAMP_DEFAULT_SUPPRESS, BGP_DAMP_DEFAULT_HALF_LIFE * 4); }
- | DAMPENING OFF { BGP_CC->damp = (struct bgp_damp_config){}; }
- | DAMPENING NO { BGP_CC->damp = (struct bgp_damp_config){}; }
+ | DAMPENING { bgp_damp_config_default(&BGP_CC->damp); BGP_CC->damp_set = 1; }
+ | DAMPENING ON { bgp_damp_config_default(&BGP_CC->damp); BGP_CC->damp_set = 1; }
+ | DAMPENING YES { bgp_damp_config_default(&BGP_CC->damp); BGP_CC->damp_set = 1; }
+ | DAMPENING OFF { BGP_CC->damp = (struct bgp_damp_config){}; BGP_CC->damp_set = 1; }
+ | DAMPENING NO { BGP_CC->damp = (struct bgp_damp_config){}; BGP_CC->damp_set = 1; }
  | DAMPENING expr {
-    if (($2 < 1) || ($2 > 45))
-      cf_error("Dampening half-life must be in range 1-45");
-    bgp_damp_config_set(&BGP_CC->damp, $2, BGP_DAMP_DEFAULT_REUSE, BGP_DAMP_DEFAULT_SUPPRESS, $2 * 4);
+    bgp_damp_config_checked(&BGP_CC->damp, $2, BGP_DAMP_DEFAULT_REUSE, BGP_DAMP_DEFAULT_SUPPRESS, $2 * 4);
+    BGP_CC->damp_set = 1;
    }
  | DAMPENING expr expr expr expr {
-    if (($2 < 1) || ($2 > 45))
-      cf_error("Dampening half-life must be in range 1-45");
-    if (($3 < 1) || ($3 > 20000))
-      cf_error("Dampening reuse value must be in range 1-20000");
-    if (($4 < 1) || ($4 > 20000))
-      cf_error("Dampening suppress value must be in range 1-20000");
-    if (($5 < 1) || ($5 > 255))
-      cf_error("Dampening max suppress time must be in range 1-255");
-    if ($4 < $3)
-      cf_error("Dampening suppress value cannot be less than reuse value");
-    bgp_damp_config_set(&BGP_CC->damp, $2, $3, $4, $5);
+    bgp_damp_config_checked(&BGP_CC->damp, $2, $3, $4, $5);
+    BGP_CC->damp_set = 1;
    }
  | IMPORT TABLE bool { BGP_CC->import_table = $3; }
  | EXPORT TABLE bool { BGP_CC->export_table = $3; }
