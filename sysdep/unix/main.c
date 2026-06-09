@@ -41,6 +41,7 @@
 #include "conf/conf.h"
 #include "filter/filter.h"
 #include "filter/data.h"
+#include "yang/yang.h"
 #include "lib/io-loop.h"
 
 #include "unix.h"
@@ -1182,6 +1183,7 @@ main(int argc, char **argv)
 
   cli_init();
   yi_init();
+  yang_init();
 
   if (!parse_and_exit)
   {

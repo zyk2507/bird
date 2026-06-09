@@ -13,5 +13,7 @@
 /sysdep/autoconf.h.in
 /sysdep/autoconf.h.in~
 /cscope.*
+__pycache__/
+*.pyc
 *.tar.gz
 /gitlab/docker.mk

@@ -24,6 +24,7 @@ CF_HDR
 #include "nest/bfd.h"
 #include "nest/cli.h"
 #include "filter/filter.h"
+#include "yang/yang.h"
 
 /* FIXME: Turn on YYERROR_VERBOSE and work around lots of bison bugs? */
 
@@ -135,6 +136,7 @@ CF_DECLS
   struct adata *ad;
   const struct adata *bs;
   struct aggr_item_node *ai;
+  enum yang_model yang_model;
 }
 
 %token END CLI_MARKER INVALID_TOKEN ELSECOL DDOT

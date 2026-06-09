@@ -25,6 +25,7 @@
 #include "nest/locks.h"
 
 #include "filter/filter.h"
+#include "yang/yang.h"
 
 #define BETWEEN(a, b, c)  (((a) >= (b)) && ((a) <= (c)))
 
@@ -69,6 +70,7 @@ bt_bird_init(void)
   if_init();
   mpls_init();
   config_init();
+  yang_init();
 
   protos_build();
 }

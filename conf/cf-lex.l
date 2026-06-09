@@ -47,6 +47,7 @@
 #include "filter/filter.h"
 #include "filter/f-inst.h"
 #include "conf/conf.h"
+#include "yang/yang.h"
 #include "conf/cf-parse.tab.h"
 #include "lib/string.h"
 #include "lib/hash.h"
@@ -970,6 +971,8 @@ cf_symbol_class_name(struct symbol *sym)
       return "MPLS domain";
     case SYM_MPLS_RANGE:
       return "MPLS label range";
+    case SYM_YANG_API:
+      return "YANG API";
     case SYM_KEYWORD:
       return "symbol";
     case SYM_CONSTANT_RANGE:

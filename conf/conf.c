@@ -56,6 +56,7 @@
 #include "conf/conf.h"
 #include "filter/filter.h"
 #include "sysdep/unix/unix.h"
+#include "yang/yang.h"
 
 
 static jmp_buf conf_jmpbuf;
@@ -322,6 +323,8 @@ config_do_commit(config_ref *cr, int type)
   if (old_config && !c->shutdown)
     log(L_INFO "Reconfiguring");
 
+  DBG("yang_commit\n");
+  yang_commit(c, old_config);
   DBG("filter_commit\n");
   filter_commit(c, old_config);
   DBG("sysdep_commit\n");
@@ -594,6 +597,8 @@ order_shutdown(int gr)
   init_list(&c->symbols);
   obstacle_target_init(&c->obstacles, &c->obstacles_cleared, c->pool, "Config");
   c->cli = (struct cli_config_list) {};
+  c->yang = (struct yang_api_config_list) {};
+  c->yang_api_counter = 0;
   memset(c->def_tables, 0, sizeof(c->def_tables));
   c->shutdown = 1;
   c->gr_down = gr;

@@ -1,0 +1,345 @@
+{
+  "ietf-sid-file:sid-file": {
+    "module-name": "bird",
+    "module-revision": "2026-02-10",
+    "sid-file-status": "unpublished",
+    "dependency-revision": [
+      {
+        "module-name": "ietf-yang-types",
+        "module-revision": "2024-01-04"
+      }
+    ],
+    "assignment-range": [
+      {
+        "entry-point": "60000",
+        "size": "1000"
+      }
+    ],
+    "item": [
+      {
+        "namespace": "module",
+        "identifier": "bird",
+        "status": "unstable",
+        "sid": "60000"
+      },
+      {
+        "namespace": "data",
+        "identifier": "/bird:cli-show-memory",
+        "status": "unstable",
+        "sid": "60001"
+      },
+      {
+        "namespace": "data",
+        "identifier": "/bird:cli-show-memory/input",
+        "status": "unstable",
+        "sid": "60002"
+      },
+      {
+        "namespace": "data",
+        "identifier": "/bird:cli-show-memory/output",
+        "status": "unstable",
+        "sid": "60003"
+      },
+      {
+        "namespace": "data",
+        "identifier": "/bird:cli-show-memory/output/show-memory-info",
+        "status": "unstable",
+        "sid": "60004"
+      },
+      {
+        "namespace": "data",
+        "identifier": "/bird:cli-show-memory/output/show-memory-info/attributes",
+        "status": "unstable",
+        "sid": "60005"
+      },
+      {
+        "namespace": "data",
+        "identifier": "/bird:cli-show-memory/output/show-memory-info/attributes/effective",
+        "status": "unstable",
+        "sid": "60006"
+      },
+      {
+        "namespace": "data",
+        "identifier": "/bird:cli-show-memory/output/show-memory-info/attributes/overhead",
+        "status": "unstable",
+        "sid": "60007"
+      },
+      {
+        "namespace": "data",
+        "identifier": "/bird:cli-show-memory/output/show-memory-info/config",
+        "status": "unstable",
+        "sid": "60008"
+      },
+      {
+        "namespace": "data",
+        "identifier": "/bird:cli-show-memory/output/show-memory-info/config/effective",
+        "status": "unstable",
+        "sid": "60009"
+      },
+      {
+        "namespace": "data",
+        "identifier": "/bird:cli-show-memory/output/show-memory-info/config/overhead",
+        "status": "unstable",
+        "sid": "60010"
+      },
+      {
+        "namespace": "data",
+        "identifier": "/bird:cli-show-memory/output/show-memory-info/pages",
+        "status": "unstable",
+        "sid": "60011"
+      },
+      {
+        "namespace": "data",
+        "identifier": "/bird:cli-show-memory/output/show-memory-info/pages/active",
+        "status": "unstable",
+        "sid": "60012"
+      },
+      {
+        "namespace": "data",
+        "identifier": "/bird:cli-show-memory/output/show-memory-info/pages/cold",
+        "status": "unstable",
+        "sid": "60013"
+      },
+      {
+        "namespace": "data",
+        "identifier": "/bird:cli-show-memory/output/show-memory-info/pages/hot",
+        "status": "unstable",
+        "sid": "60014"
+      },
+      {
+        "namespace": "data",
+        "identifier": "/bird:cli-show-memory/output/show-memory-info/pages/hot-rcu-failure-count",
+        "status": "unstable",
+        "sid": "60015"
+      },
+      {
+        "namespace": "data",
+        "identifier": "/bird:cli-show-memory/output/show-memory-info/protocols",
+        "status": "unstable",
+        "sid": "60016"
+      },
+      {
+        "namespace": "data",
+        "identifier": "/bird:cli-show-memory/output/show-memory-info/protocols/effective",
+        "status": "unstable",
+        "sid": "60017"
+      },
+      {
+        "namespace": "data",
+        "identifier": "/bird:cli-show-memory/output/show-memory-info/protocols/overhead",
+        "status": "unstable",
+        "sid": "60018"
+      },
+      {
+        "namespace": "data",
+        "identifier": "/bird:cli-show-memory/output/show-memory-info/tables",
+        "status": "unstable",
+        "sid": "60019"
+      },
+      {
+        "namespace": "data",
+        "identifier": "/bird:cli-show-memory/output/show-memory-info/tables/effective",
+        "status": "unstable",
+        "sid": "60020"
+      },
+      {
+        "namespace": "data",
+        "identifier": "/bird:cli-show-memory/output/show-memory-info/tables/overhead",
+        "status": "unstable",
+        "sid": "60021"
+      },
+      {
+        "namespace": "data",
+        "identifier": "/bird:cli-show-memory/output/show-memory-info/total",
+        "status": "unstable",
+        "sid": "60022"
+      },
+      {
+        "namespace": "data",
+        "identifier": "/bird:cli-show-memory/output/show-memory-info/total/effective",
+        "status": "unstable",
+        "sid": "60023"
+      },
+      {
+        "namespace": "data",
+        "identifier": "/bird:cli-show-memory/output/show-memory-info/total/overhead",
+        "status": "unstable",
+        "sid": "60024"
+      },
+      {
+        "namespace": "data",
+        "identifier": "/bird:cli-show-status",
+        "status": "unstable",
+        "sid": "60025"
+      },
+      {
+        "namespace": "data",
+        "identifier": "/bird:cli-show-status/input",
+        "status": "unstable",
+        "sid": "60026"
+      },
+      {
+        "namespace": "data",
+        "identifier": "/bird:cli-show-status/output",
+        "status": "unstable",
+        "sid": "60027"
+      },
+      {
+        "namespace": "data",
+        "identifier": "/bird:cli-show-status/output/show-status-info",
+        "status": "unstable",
+        "sid": "60028"
+      },
+      {
+        "namespace": "data",
+        "identifier": "/bird:cli-show-status/output/show-status-info/version",
+        "status": "unstable",
+        "sid": "60029"
+      },
+      {
+        "namespace": "data",
+        "identifier": "/bird:cli-show-status/output/show-status-info/router-id",
+        "status": "unstable",
+        "sid": "60030"
+      },
+      {
+        "namespace": "data",
+        "identifier": "/bird:cli-show-status/output/show-status-info/hostname",
+        "status": "unstable",
+        "sid": "60031"
+      },
+      {
+        "namespace": "data",
+        "identifier": "/bird:cli-show-status/output/show-status-info/server-time-us",
+        "status": "unstable",
+        "sid": "60032"
+      },
+      {
+        "namespace": "data",
+        "identifier": "/bird:cli-show-status/output/show-status-info/last-reboot-us",
+        "status": "unstable",
+        "sid": "60033"
+      },
+      {
+        "namespace": "data",
+        "identifier": "/bird:cli-show-status/output/show-status-info/last-reconfiguration-us",
+        "status": "unstable",
+        "sid": "60034"
+      },
+      {
+        "namespace": "data",
+        "identifier": "/bird:cli-show-status/output/show-status-info/state",
+        "status": "unstable",
+        "sid": "60035"
+      },
+      {
+        "namespace": "data",
+        "identifier": "/bird:cli-show-symbols",
+        "status": "unstable",
+        "sid": "60036"
+      },
+      {
+        "namespace": "data",
+        "identifier": "/bird:cli-show-symbols/input",
+        "status": "unstable",
+        "sid": "60037"
+      },
+      {
+        "namespace": "data",
+        "identifier": "/bird:cli-show-symbols/output",
+        "status": "unstable",
+        "sid": "60038"
+      },
+      {
+        "namespace": "data",
+        "identifier": "/bird:cli-show-symbols/output/show-symbols-info",
+        "status": "unstable",
+        "sid": "60039"
+      },
+      {
+        "namespace": "data",
+        "identifier": "/bird:cli-show-symbols/output/show-symbols-info/symbol",
+        "status": "unstable",
+        "sid": "60040"
+      },
+      {
+        "namespace": "data",
+        "identifier": "/bird:cli-show-symbols/output/show-symbols-info/symbol/name",
+        "status": "unstable",
+        "sid": "60041"
+      },
+      {
+        "namespace": "data",
+        "identifier": "/bird:cli-show-symbols/output/show-symbols-info/symbol/type",
+        "status": "unstable",
+        "sid": "60042"
+      },
+      {
+        "namespace": "data",
+        "identifier": "/bird:cli-show-protocols",
+        "status": "unstable",
+        "sid": "60043"
+      },
+      {
+        "namespace": "data",
+        "identifier": "/bird:cli-show-protocols/input",
+        "status": "unstable",
+        "sid": "60044"
+      },
+      {
+        "namespace": "data",
+        "identifier": "/bird:cli-show-protocols/output",
+        "status": "unstable",
+        "sid": "60045"
+      },
+      {
+        "namespace": "data",
+        "identifier": "/bird:cli-show-protocols/output/show-protocols-info",
+        "status": "unstable",
+        "sid": "60046"
+      },
+      {
+        "namespace": "data",
+        "identifier": "/bird:cli-show-protocols/output/show-protocols-info/protocol",
+        "status": "unstable",
+        "sid": "60047"
+      },
+      {
+        "namespace": "data",
+        "identifier": "/bird:cli-show-protocols/output/show-protocols-info/protocol/name",
+        "status": "unstable",
+        "sid": "60048"
+      },
+      {
+        "namespace": "data",
+        "identifier": "/bird:cli-show-protocols/output/show-protocols-info/protocol/proto",
+        "status": "unstable",
+        "sid": "60049"
+      },
+      {
+        "namespace": "data",
+        "identifier": "/bird:cli-show-protocols/output/show-protocols-info/protocol/table",
+        "status": "unstable",
+        "sid": "60050"
+      },
+      {
+        "namespace": "data",
+        "identifier": "/bird:cli-show-protocols/output/show-protocols-info/protocol/state",
+        "status": "unstable",
+        "sid": "60051"
+      },
+      {
+        "namespace": "data",
+        "identifier": "/bird:cli-show-protocols/output/show-protocols-info/protocol/since-time-us",
+        "status": "unstable",
+        "sid": "60052"
+      },
+      {
+        "namespace": "data",
+        "identifier": "/bird:cli-show-protocols/output/show-protocols-info/protocol/info",
+        "status": "unstable",
+        "sid": "60053"
+      }
+    ]
+  }
+}
