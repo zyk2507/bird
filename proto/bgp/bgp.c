@@ -132,6 +132,7 @@
 #include "lib/hash.h"
 
 #include "bgp.h"
+#include "proto/bgp/bgp_damp.h"
 #ifdef CONFIG_BMP
 #include "proto/bmp/bmp.h"
 #endif
@@ -1504,6 +1505,8 @@ bgp_conn_enter_established_state(struct bgp_conn *conn)
 
     if (p->route_refresh)
       c->c.reloadable = CHANNEL_RELOADABLE_REMOTELY;
+    else if (c->cf->import_table && !c->damp.active)
+      c->c.reloadable = CHANNEL_RELOADABLE_LOCALLY;
     else
       c->c.reloadable = CHANNEL_RELOADABLE_NEVER;
 
@@ -1865,6 +1868,7 @@ bgp_refresh_begin(struct bgp_channel *c)
   { log(L_WARN "%s: BEGIN-OF-RR received before END-OF-RIB, ignoring", p->p.name); return; }
 
   c->load_state = BFS_REFRESHING;
+  bgp_damp_refresh_begin(c);
   rt_refresh_begin(&c->c.in_req);
 }
 
@@ -1887,6 +1891,7 @@ bgp_refresh_end(struct bgp_channel *c)
 
   c->load_state = BFS_NONE;
   rt_refresh_end(&c->c.in_req);
+  bgp_damp_refresh_end(c);
 }
 
 
@@ -3208,6 +3213,7 @@ bgp_channel_start(struct channel *C)
   }
 
   c->pool = p->p.pool; // XXXX
+  bgp_damp_start(c);
 
   bgp_init_pending_tx(c);
   c->tx_keep = c->cf->export_table;
@@ -3273,6 +3279,8 @@ bgp_channel_shutdown(struct channel *C)
 {
   struct bgp_channel *c = (void *) C;
 
+  bgp_damp_shutdown(c);
+
   c->next_hop_addr = IPA_NONE;
   c->link_addr = IPA_NONE;
   c->packets_to_send = 0;
@@ -3294,6 +3302,8 @@ bgp_channel_cleanup(struct channel *C)
     rt_flowspec_unlink(c->base_table, c->c.table);
     rt_unlock_table(c->base_table);
   }
+
+  bgp_damp_shutdown(c);
 
   c->index = 0;
 
@@ -3778,6 +3788,12 @@ bgp_channel_reconfigure(struct channel *C, struct channel_config *CC, int *impor
       (new->llgr_time != old->llgr_time) ||
       (new->ext_next_hop != old->ext_next_hop) ||
       (new->add_path != old->add_path) ||
+      (new->damp.enabled != old->damp.enabled) ||
+      (new->damp.half_life != old->damp.half_life) ||
+      (new->damp.reuse_limit != old->damp.reuse_limit) ||
+      (new->damp.suppress_value != old->damp.suppress_value) ||
+      (new->damp.max_suppress_time != old->damp.max_suppress_time) ||
+      (new->import_table != old->import_table) ||
       (new->export_table != old->export_table) ||
       (TABLE(new, igp_table_ip4) != TABLE(old, igp_table_ip4)) ||
       (TABLE(new, igp_table_ip6) != TABLE(old, igp_table_ip6)) ||

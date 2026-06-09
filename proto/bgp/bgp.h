@@ -18,6 +18,7 @@
 //#include "lib/lists.h"
 #include "lib/hash.h"
 #include "lib/socket.h"
+#include "proto/bgp/bgp_damp.h"
 
 struct eattr;
 
@@ -191,6 +192,7 @@ struct bgp_channel_config {
   u8 require_add_path;			/* Require remote support of ADD-PATH extension [RFC 7911] */
   u8 aigp;				/* AIGP is allowed on this session */
   u8 aigp_originate;			/* AIGP is originated automatically */
+  struct bgp_damp_config damp;		/* BGP route flap dampening */
   u32 cost;				/* IGP cost for direct next hops */
   u8 import_table;			/* Use c.in_table as Adj-RIB-In */
   u8 export_table;			/* Keep Adj-RIB-Out and export it */
@@ -518,6 +520,8 @@ struct bgp_channel {
   struct rt_feeding_request enhanced_rr_request; /* Refeed request for enhanced route refresh */
   event enhanced_rr_restart;		/* Event to restart enhanced route request */
   u8 enhanced_rr_again;			/* Another refeed requested while refeeding */
+
+  struct bgp_damp_state damp;		/* BGP route flap dampening state */
 
   u8 add_path_rx;			/* Session expects receive of ADD-PATH extended NLRI */
   u8 add_path_tx;			/* Session expects transmit of ADD-PATH extended NLRI */

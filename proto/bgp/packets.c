@@ -26,6 +26,7 @@
 #include "nest/cli.h"
 
 #include "bgp.h"
+#include "proto/bgp/bgp_damp.h"
 #ifdef CONFIG_BMP
 #include "proto/bmp/bmp.h"
 #endif
@@ -1630,15 +1631,34 @@ bgp_rte_update(struct bgp_parse_state *s, const net_addr *n, u32 path_id, ea_lis
     if (s->err_withdraw && s->reach_nlri_step)
       REPORT("Invalid route %N withdrawn", n);
 
+    if (bgp_damp_withdraw(s->channel, n, s->last_src, 0) == BGP_DAMP_SUPPRESSED)
+      return;
+
     /* Route withdraw */
     rte_update(&s->channel->c, n, NULL, s->last_src);
     return;
   }
 
+  ea_list *attrs = a0;
+
   rte e0 = {
-    .attrs = a0,
+    .attrs = attrs,
     .src = s->last_src,
   };
+
+  if (s->channel->damp.active)
+  {
+    attrs = ea_lookup_tmp(a0, 0, EALS_IN_TABLE);
+    e0.attrs = attrs;
+
+    if (bgp_damp_update(s->channel, n, s->last_src, attrs) == BGP_DAMP_SUPPRESSED)
+    {
+      if (bgp_damp_has_visible_route(s->channel, n, s->last_src))
+	rte_update(&s->channel->c, n, NULL, s->last_src);
+
+      return;
+    }
+  }
 
   rte_update(&s->channel->c, n, &e0, s->last_src);
 }

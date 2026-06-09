@@ -77,13 +77,17 @@ static inline void channel_reimport(struct channel *c, struct rt_feeding_request
 
 static inline bool channel_reload(struct channel *c, struct rt_feeding_request *rfr)
 {
-  if ((c->in_keep & RIK_PREFILTER) == RIK_PREFILTER)
+  if (((c->in_keep & RIK_PREFILTER) == RIK_PREFILTER) &&
+      (c->reloadable == CHANNEL_RELOADABLE_LOCALLY))
   {
     channel_reimport(c, rfr);
     return true;
   }
-  else
+
+  if (c->proto->reload_routes && (c->reloadable != CHANNEL_RELOADABLE_NEVER))
     return c->proto->reload_routes(c, rfr);
+
+  return false;
 }
 
 static inline void channel_reload_roa(struct channel *c, struct rt_feeding_request *rfr)
@@ -124,8 +128,9 @@ static inline int channel_is_active(struct channel *c)
 
 static inline enum channel_reloadable channel_reloadable(struct channel *c)
 {
-  /* Import table always reloads locally */
-  if ((c->in_keep & RIK_PREFILTER) == RIK_PREFILTER)
+  /* Import table usually reloads locally, unless the protocol overrides it. */
+  if (((c->in_keep & RIK_PREFILTER) == RIK_PREFILTER) &&
+      (c->reloadable == CHANNEL_RELOADABLE_LOCALLY))
     return CHANNEL_RELOADABLE_LOCALLY;
 
   /* The protocol should indicate how the reload actually works */
