@@ -110,6 +110,11 @@ struct yang_api_config {
   TLIST_LIST(yang_socket_config) listen;	/* All sockets pointed to this API */
 };
 
+#ifdef _BIRD_YANG_API_CONFIG_LIST_DEFINED_
+#define TLIST_DEFINED_BEFORE
+#else
+#define _BIRD_YANG_API_CONFIG_LIST_DEFINED_
+#endif
 #include "lib/tlists.h"
 
 /* YANG API runtime structure */

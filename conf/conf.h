@@ -18,7 +18,10 @@
 #include "lib/tlists.h"
 
 struct yang_api_config;
+#ifndef _BIRD_YANG_API_CONFIG_LIST_DEFINED_
+#define _BIRD_YANG_API_CONFIG_LIST_DEFINED_
 TLIST_STRUCT_DEF(yang_api_config, struct yang_api_config);
+#endif
 
 /* Configuration structure */
 struct config {
