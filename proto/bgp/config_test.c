@@ -48,7 +48,7 @@ find_bgp_config(struct config *cfg, const char *name)
   struct proto_config *pc;
 
   WALK_LIST(pc, cfg->protos)
-    if ((pc->protocol->class == PROTOCOL_BGP) && !strcmp(pc->name, name))
+    if ((pc->protocol == &proto_bgp) && !strcmp(pc->name, name))
       return (struct bgp_config *) pc;
 
   bt_abort_msg("BGP protocol %s not found", name);
@@ -196,6 +196,5 @@ main(int argc, char *argv[])
   bt_test_suite(t_bgp_damp_template_inheritance,
 		"BGP dampening template inheritance and channel override");
 
-  bt_bird_cleanup();
   return bt_exit_value();
 }
